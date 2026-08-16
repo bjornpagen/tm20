@@ -721,11 +721,18 @@ dependencies = [
 name = "tm20"
 version = "0.1.0"
 dependencies = [
+ "nusb",
+ "serialport",
+]
+
+[[package]]
+name = "tm20-set"
+version = "0.1.0"
+dependencies = [
  "font-kit",
  "fontdue",
  "harfrust",
- "nusb",
- "serialport",
+ "tm20",
 ]
 
 [[package]]

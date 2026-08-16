@@ -1,18 +1,8 @@
-[package]
-name = "tm20"
-version = "0.1.0"
+[workspace]
+resolver = "2"
+members = ["crates/tm20", "crates/tm20-set"]
+
+[workspace.package]
 edition = "2021"
-description = "ESC/POS dialect for Epson TM-T20 printers: a Command IR, an encoder, and transports"
 license = "0BSD"
 publish = false
-
-[[bin]]
-name = "tm20"
-path = "src/bin/tm20.rs"
-
-[dependencies]
-nusb = "0.2"
-serialport = "4"
-fontdue = "0.9"
-harfrust = "0.13"
-font-kit = "0.14"

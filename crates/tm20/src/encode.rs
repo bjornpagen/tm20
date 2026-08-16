@@ -1,7 +1,9 @@
 //! `encode` is a function. Valid IR becomes bytes; illegal combinations error.
 
 use crate::barcode;
-use crate::command::{Align, CashDrawerPin, Command, CutKind, Font, LineSpacing, Underline};
+use crate::command::{
+    Align, CashDrawerPin, Command, CutKind, Font, LineSpacing, PrintSpeed, Underline,
+};
 use crate::cp437::encode_cp437;
 use crate::document::Document;
 use crate::error::EncodeError;
@@ -60,6 +62,14 @@ fn encode_one(cmd: &Command, out: &mut Vec<u8>) -> Result<(), EncodeError> {
         Command::PrintAreaWidth { dots } => {
             let [lo, hi] = u16_le(*dots);
             out.extend_from_slice(&[GS, b'W', lo, hi]);
+        }
+        Command::PrintSpeed(speed) => {
+            let m = match speed {
+                PrintSpeed::Default => 0,
+                PrintSpeed::Level(n) if (1..=13).contains(n) => *n,
+                PrintSpeed::Level(n) => return Err(EncodeError::PrintSpeed(*n)),
+            };
+            out.extend_from_slice(&[GS, b'(', b'K', 2, 0, 50, m]);
         }
         Command::LineSpacing(LineSpacing::Default) => out.extend_from_slice(&[ESC, b'2']),
         Command::LineSpacing(LineSpacing::Dots(n)) => out.extend_from_slice(&[ESC, b'3', *n]),
@@ -165,6 +175,25 @@ mod tests {
     }
 
     #[test]
+    fn print_speed_is_gs_k_fn50() {
+        use crate::command::PrintSpeed;
+        let doc = Document::new(vec![
+            Command::PrintSpeed(PrintSpeed::Default),
+            Command::PrintSpeed(PrintSpeed::level(8).unwrap()),
+            Command::PrintSpeed(PrintSpeed::level(13).unwrap()),
+        ]);
+        assert_eq!(
+            encode(&doc).unwrap(),
+            vec![
+                0x1d, b'(', b'K', 2, 0, 50, 0, 0x1d, b'(', b'K', 2, 0, 50, 8, 0x1d, b'(', b'K', 2,
+                0, 50, 13,
+            ]
+        );
+        let bad = Document::new(vec![Command::PrintSpeed(PrintSpeed::Level(14))]);
+        assert!(matches!(encode(&bad), Err(EncodeError::PrintSpeed(14))));
+    }
+
+    #[test]
     fn motion_and_drawer() {
         let doc = Document::new(vec![
             Command::MotionUnits { x: 10, y: 20 },
@@ -202,6 +231,7 @@ mod tests {
     #[test]
     fn every_command_variant_encodes() {
         use crate::barcode::{Barcode, BarcodeKind, BarcodeOptions, Code128Set};
+        use crate::command::PrintSpeed;
         use crate::graphics::{pack, Graphics, GraphicsScale};
         use crate::status::StatusRequest;
         use crate::symbol::{
@@ -228,6 +258,7 @@ mod tests {
             Command::SetTabs(vec![10]),
             Command::LeftMargin { dots: 0 },
             Command::PrintAreaWidth { dots: 576 },
+            Command::PrintSpeed(PrintSpeed::Default),
             Command::LineSpacing(LineSpacing::Default),
             Command::LineSpacing(LineSpacing::Dots(24)),
             Command::Align(Align::Center),

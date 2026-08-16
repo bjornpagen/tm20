@@ -59,6 +59,21 @@ pub enum CashDrawerPin {
     Pin5,
 }
 
+/// Per-job print speed (`GS ( K` fn=50). Volatile; `Init` restores NV.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrintSpeed {
+    /// Use the NV customized value (`a = 6`).
+    Default,
+    /// 1 = slow, 13 = fast.
+    Level(u8),
+}
+
+impl PrintSpeed {
+    pub fn level(n: u8) -> Option<Self> {
+        (1..=13).contains(&n).then_some(Self::Level(n))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Init,
@@ -98,6 +113,8 @@ pub enum Command {
     PrintAreaWidth {
         dots: u16,
     },
+    /// `GS ( K` fn=50 — per-job print speed.
+    PrintSpeed(PrintSpeed),
     LineSpacing(LineSpacing),
     Align(Align),
     Font(Font),

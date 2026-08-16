@@ -1,0 +1,15 @@
+[package]
+name = "tm20"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "ESC/POS dialect for Epson TM-T20 printers: a Command IR, an encoder, and transports"
+
+[[bin]]
+name = "tm20"
+path = "src/bin/tm20.rs"
+
+[dependencies]
+nusb = "0.2"
+serialport = "4"

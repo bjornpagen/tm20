@@ -1,0 +1,17 @@
+[package]
+name = "tm20-set"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Typesetting language for tm20: a Sheet of Frames lowers to protocol Graphics"
+
+[[bin]]
+name = "tm20-set"
+path = "src/bin/tm20-set.rs"
+
+[dependencies]
+tm20 = { path = "../tm20" }
+fontdue = "0.9"
+harfrust = "0.13"
+font-kit = "0.14"

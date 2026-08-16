@@ -1,12 +1,12 @@
 # tm20 feature board (locked)
 
-This is the decision record for the **protocol crate** (`tm20`: `Document` → `encode` → `Transport`). Higher-level work (Inter, PNG, wrap, gapless art) is a **different crate**. It may depend on `tm20`; `tm20` must not depend on it.
+This is the decision record for the **protocol crate** (`tm20`: `Document` → `encode` → `Transport`). Typesetting is **`tm20-set`**. It depends on `tm20`; `tm20` must not depend on it.
 
 Statuses used below:
 
 - `do` — change this crate in the next implementation pass
 - `keep` — already correct; leave it
-- `out` — belongs in the host crate, not here
+- `out` — belongs in `tm20-set`, not here
 - `later` — real protocol, not in this pass
 - `never` — will not add
 
@@ -30,17 +30,17 @@ Hello golden is frozen: `1B 40  1B 74 00  SYSTEM ONLINE  0A 0A 0A  1D 56 42 00`.
 | 8 | `GS I` + `tm20 id` | protocol | **do** |
 | 9 | `GS ( H` process ID, CLI `--wait` only | protocol | **do** |
 | 10 | Slim `StatusRequest` to printer / offline / error / roll | protocol | **do** |
-| 11 | Move `raster_from_png` / `graphics` feature out of this crate | split | **do** |
+| 11 | Move host raster out of this crate (`tm20-set`) | split | **do** |
 | 12 | Keep 2D that drew. **Delete `Aztec`** — cn=53 is ignored, payload prints as text (`(k5P0tm20`) | protocol | **do** |
 | 13 | 1D GS1 DataBar `GS k` `'K'`–`'N'` | protocol | **later** |
 | 14 | User-defined characters `ESC &` | protocol | **later** |
 | 15 | Page mode | protocol | **later** |
 | 16 | Composite symbology | protocol | **never** (unless we need GS1 receipts) |
 | 17 | `ESC *`, `GS 8 L`, `ESC d`, NV logos, macros, ASB, `GS ( E`, buzzer, Kanji, typestate | protocol | **never** |
-| 18 | Inter rasterizer (proportional, host-side) | host crate | **out** |
-| 19 | Gapless CP437 art renderer | host crate | **out** |
-| 20 | PNG load / dither / scale to 576 | host crate | **out** |
-| 21 | Word wrap / two-column layout helpers | host crate | **out** |
+| 18 | Host typeface (`tm20-set`: Sheet → Graphics) | tm20-set | **out** |
+| 19 | Gapless CP437 art renderer | tm20-set | **out** |
+| 20 | PNG load / dither / scale to 576 | tm20-set | **out** |
+| 21 | Word wrap / pair layout | tm20-set | **out** |
 
 Fanout order for `do`: **1 → 3,4,5 (IR cleanup) → 2 → 6,7 → 8,9,10 → 11.**
 
@@ -49,13 +49,13 @@ Fanout order for `do`: **1 → 3,4,5 (IR cleanup) → 2 → 6,7 → 8,9,10 → 1
 ## Crate split
 
 ```
-tm20          protocol: Command, encode, Memory/USB/TCP/serial, thin CLI (list, hello, test, debug, status, id)
-tm20-host     (name TBD) layout: Inter → 1-bit, PNG, wrap, gapless art ops → Vec<Command>
+tm20       protocol: Command, encode, USB/serial/TCP, thin CLI (list, hello, test, debug, status, id)
+tm20-set   typesetter: Sheet of Frames → Graphics. OpenType, Vignelli sizes, 8-dot leading. Binary tm20-set print.
 ```
 
 `pack()` (bool pixels → MSB-first bytes) stays in `tm20`. That is the wire format of `Graphics`, not a pretty-printer.
 
-`tm20` CLI stays a protocol exerciser. It does not grow `png`, `art`, or Inter flags.
+`tm20` CLI stays a protocol exerciser. Host typeface is `tm20-set`. Receipts with Grotesk are a `Sheet` or they do not exist. `PrintSpeed` stays on `tm20::Command`; the typesetter does not inject it.
 
 ---
 
@@ -145,13 +145,13 @@ Keep `DLE EOT` 1–4 (printer, offline, error, roll). Drop ink / peeler / DMD / 
 
 ### 11. Strip host from this crate
 
-Delete `raster_from_png` and the `graphics` Cargo feature. PNG belongs next to Inter.
+Delete `raster_from_png` and the `graphics` Cargo feature. PNG belongs next to the typesetter, not in the protocol crate.
 
 ---
 
 ## Protocol: keep
 
-Resident style (bold, underline, invert, size, smoothing, double-strike, upside-down), CP437 `Text`, `Raw`, motion units, drawer, cuts, line spacing. QR stays. Other 2D: keep only if the page showed a symbol, not ASCII leakage. Aztec is out.
+Resident style (bold, underline, invert, size, smoothing, double-strike, upside-down), CP437 `Text`, `Raw`, motion units, drawer, cuts, line spacing. QR stays. Other 2D: keep only if the page showed a symbol, not ASCII leakage. Aztec is out. Per-job `GS ( K` fn=50 (speed) stays. fn=49 density bias is ignored on this firmware — unrepresentable.
 
 `Cancel` (`CAN`) stays — it is the page-mode buffer clear, cheap, and we will want it if page mode ever lands.
 
@@ -180,23 +180,25 @@ Resident style (bold, underline, invert, size, smoothing, double-strike, upside-
 | Download graphics fn=83/85 | Second image store. Print-now `GS ( L` is enough. |
 | Macros `GS :` | `Document` is the sequence. |
 | ASB `GS a` | Unsolicited IN. USB is a pipe. |
-| `GS ( E` USB class | Can hide the device from `nusb`. |
+| `GS ( E` USB class / interface / paper width | Can hide the device from `nusb` or change geometry. Density/speed NV is a Transport session, never a `Document` command. |
 | OT-BZ20 / Kanji `FS` | Hardware/ROM we do not have. |
 | Fluent builder, hidapi, usbprint, `no_std` | Out of taste. |
 | Ready/Busy USB typestate | Printer queues. |
 | Composite `GS ( k` cn=52 | Extra 2D family; not needed. |
+| `GS ( K` fn=49 density bias | TM-T20III ignores it. Same as Aztec. |
 
 ---
 
-## Host crate: out of `tm20` (do not implement here)
+## Host crate: `tm20-set`
 
-The printer never loads Inter. Inter is a **host rasterizer**: layout at 203 dpi, threshold to 1-bit, emit `Graphics`. That is proportional (kerning baked into pixels). `ESC &` cannot host Inter (12×24 cage).
+The printer never loads a TTF. `tm20-set` is the authoring surface: a closed `Frame` AST (`Text` / `Mark` / `Pair` / `Rule` / `Skip`), optical roles (`TextFace` at 8|11 pt, `DisplayFace` at 14|18|24 pt), leading snapped to an 8-dot grid. `compose` packs one `Graphics`; `lower` emits `Init`, CP437, that raster, feed, partial cut.
 
-Same crate as Inter, later:
+Kerning is data in the glyph stream. Ugly layouts (justify, right-aligned paragraphs, 9.5 pt, CSS line-height) are unrepresentable.
+
+Still not in either crate:
 
 - PNG → 576-dot 1-bit → `Graphics`
-- Word wrap at 48/64 columns; two-column via position commands
-- Gapless CP437 art (`ESC 3` = glyph height) — morningprint’s renderer, not Claude/Pi
+- Gapless CP437 art (`ESC 3` = glyph height)
 
 `tm20` only supplies `Graphics` + `pack` + style commands those helpers lower into.
 

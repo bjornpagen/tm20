@@ -11,7 +11,6 @@ pub enum Error {
     Usb(UsbError),
     Status(StatusError),
     Identify(IdentifyError),
-    Typeface(TypefaceError),
     Io(io::Error),
     Serial(serialport::Error),
 }
@@ -23,7 +22,6 @@ impl fmt::Display for Error {
             Error::Usb(e) => write!(f, "{e}"),
             Error::Status(e) => write!(f, "{e}"),
             Error::Identify(e) => write!(f, "{e}"),
-            Error::Typeface(e) => write!(f, "{e}"),
             Error::Io(e) => write!(f, "{e}"),
             Error::Serial(e) => write!(f, "{e}"),
         }
@@ -53,12 +51,6 @@ impl From<StatusError> for Error {
 impl From<IdentifyError> for Error {
     fn from(e: IdentifyError) -> Self {
         Error::Identify(e)
-    }
-}
-
-impl From<TypefaceError> for Error {
-    fn from(e: TypefaceError) -> Self {
-        Error::Typeface(e)
     }
 }
 
@@ -96,6 +88,7 @@ pub enum EncodeError {
     Gs2dTooLong { len: usize },
     GraphicsPackedLen { expected: usize, got: usize },
     GraphicsTooLong { len: usize },
+    PrintSpeed(u8),
 }
 
 impl fmt::Display for EncodeError {
@@ -135,6 +128,7 @@ impl fmt::Display for EncodeError {
             EncodeError::GraphicsTooLong { len } => {
                 write!(f, "graphics payload length {len} exceeds 65535")
             }
+            EncodeError::PrintSpeed(n) => write!(f, "print speed {n} not in 1..=13"),
         }
     }
 }
@@ -214,34 +208,3 @@ impl fmt::Display for IdentifyError {
 }
 
 impl std::error::Error for IdentifyError {}
-
-#[derive(Debug)]
-pub enum TypefaceError {
-    Font,
-    NotFound { family: String },
-    Overflow { width: u32, height: u32 },
-    Io(io::Error),
-}
-
-impl fmt::Display for TypefaceError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TypefaceError::Font => write!(f, "could not parse typeface"),
-            TypefaceError::NotFound { family } => {
-                write!(f, "system typeface {family:?} not found")
-            }
-            TypefaceError::Overflow { width, height } => {
-                write!(f, "typeface raster {width}x{height} does not fit Graphics")
-            }
-            TypefaceError::Io(e) => write!(f, "{e}"),
-        }
-    }
-}
-
-impl std::error::Error for TypefaceError {}
-
-impl From<io::Error> for TypefaceError {
-    fn from(e: io::Error) -> Self {
-        TypefaceError::Io(e)
-    }
-}

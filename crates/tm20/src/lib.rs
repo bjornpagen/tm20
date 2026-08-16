@@ -20,14 +20,15 @@ pub mod serial;
 pub mod status;
 pub mod symbol;
 pub mod transport;
-pub mod typeface;
 pub mod usb;
 
 pub use barcode::{Barcode, BarcodeFont, BarcodeKind, BarcodeOptions, Code128Set, HriPosition};
-pub use command::{Align, CashDrawerPin, CodePage, Command, CutKind, Font, LineSpacing, Underline};
+pub use command::{
+    Align, CashDrawerPin, CodePage, Command, CutKind, Font, LineSpacing, PrintSpeed, Underline,
+};
 pub use document::Document;
 pub use encode::encode;
-pub use error::{EncodeError, Error, IdentifyError, Result, StatusError, TypefaceError, UsbError};
+pub use error::{EncodeError, Error, IdentifyError, Result, StatusError, UsbError};
 pub use graphics::{pack, Graphics, GraphicsScale};
 pub use host::{ean13_page, hello, qr_page, rule, ruler, text_page};
 pub use identify::{encode_info, encode_process_id, parse_process_id, query_info, InfoRequest};
@@ -41,9 +42,6 @@ pub use symbol::{
     MaxiCodeMode, Pdf417, Pdf417Ecc, Pdf417Kind, Qr, QrEcc, QrModel,
 };
 pub use transport::Transport;
-pub use typeface::{
-    raster as raster_typeface, Align as TypeAlign, Dots, Face, Line, Pt, Run, Weight as TypeWeight,
-};
 pub use usb::{PortStatus, Usb, UsbDeviceInfo};
 
 pub const VID: u16 = 0x04b8;
