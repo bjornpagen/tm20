@@ -1,4 +1,4 @@
-//! ESC/POS for the Epson TM-T20III.
+//! ESC/POS dialect for Epson TM-T20 printers, proven on the TM-T20III.
 //!
 //! The public contract is a [`Document`] of [`Command`] values, [`encode`] to
 //! bytes, and a [`Transport`] that writes them. USB (`04b8:0e28`) is the first

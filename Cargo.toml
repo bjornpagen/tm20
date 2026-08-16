@@ -2,8 +2,8 @@
 name = "tm20"
 version = "0.1.0"
 edition = "2021"
-description = "ESC/POS for the Epson TM-T20III: a Command IR, an encoder, and transports"
-license = "MIT"
+description = "ESC/POS dialect for Epson TM-T20 printers: a Command IR, an encoder, and transports"
+license = "0BSD"
 publish = false
 
 [[bin]]

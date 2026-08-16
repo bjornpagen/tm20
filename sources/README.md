@@ -8,7 +8,3 @@ TM-T20III Technical Reference Guide (LEDs, geometry, USB, errors):
 ESC/POS command reference is HTML only (no PDF):
 
     https://download4.epson.biz/sec_pubs/pos/reference_en/escpos/index.html
-
-morningprint's local protocol notes (not official):
-
-    ~/Documents/morningprint/docs/escpos-protocol.md

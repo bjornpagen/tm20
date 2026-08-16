@@ -206,4 +206,3 @@ Same crate as Inter, later:
 
 - TM-T20III TRG: `sources/tm-t20iii_trg_en_reva.pdf`
 - TM-T20 ESC/POS quick reference: http://www.novopos.ch/client/EPSON/TM-T20/TM-T20_eng_qr.pdf
-- morningprint protocol notes: `~/Documents/morningprint/docs/escpos-protocol.md`
