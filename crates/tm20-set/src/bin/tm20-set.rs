@@ -7,8 +7,11 @@ use tm20::{Transport, Usb};
 use tm20_set::{catalog, find_sheet};
 
 fn usage() {
+    let ids: Vec<_> = catalog().iter().map(|c| c.id).collect();
     eprintln!(
-        "tm20-set [--serial S] [--dry] print [scale|ticket|nhg|all]\n  sheets: scale, ticket, nhg"
+        "tm20-set [--serial S] [--dry] print [{}|all]\n  sheets: {}",
+        ids.join("|"),
+        ids.join(", ")
     );
 }
 

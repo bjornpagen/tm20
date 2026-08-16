@@ -22,20 +22,19 @@ pub fn lower(sheet: &Sheet<'_>) -> Result<Document, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::face::{TextFace, Weight};
+    use crate::face::{Slope, TextFace, Weight};
     use crate::frame::{Frame, Sheet, TextBlock};
     use crate::size::TextSize;
     use tm20::encode::encode;
 
     #[test]
     fn ticket_encodes() {
-        let face = TextFace::sans(Weight::Roman).expect("sans");
-        let sheet = Sheet::tape(vec![Frame::Text(TextBlock {
-            face: &face,
-            size: TextSize::Pt11,
-            text: "ok",
-            indent: 0,
-        })]);
+        let face = TextFace::sans(Weight::Roman, Slope::Upright).expect("sans");
+        let sheet = Sheet::tape(vec![Frame::Text(TextBlock::plain(
+            &face,
+            TextSize::Pt11,
+            "ok",
+        ))]);
         let bytes = encode(&lower(&sheet).unwrap()).unwrap();
         assert!(bytes.windows(3).any(|w| w == [0x1d, b'(', b'L']));
     }

@@ -1,12 +1,16 @@
-//! Baseline skip on an 8-dot grid. Not a CSS ratio.
+//! Baseline skip in points; column gutters in 8-dot modules. Two coordinates.
 
 use crate::size::{DisplaySize, TextSize};
 
-/// Snap unit in dots. Divides Font A’s 24-dot cell.
+/// White-space module in dots. Divides Font A’s 24-dot cell. Not leading.
 pub const GRID: u16 = 8;
 
-fn snap_up(dots: u16) -> u16 {
-    dots.div_ceil(GRID) * GRID
+/// Gap from the bottom of a rule to the cap-line, in device dots (~1 pt).
+pub const HANG: u16 = 3;
+
+/// One point in device dots at 203 dpi.
+pub fn pt_dots(pt: f32) -> u16 {
+    (pt * crate::DPI / 72.0).round() as u16
 }
 
 /// Positive multiple of [`GRID`].
@@ -29,21 +33,17 @@ impl GridSkip {
     }
 }
 
-/// Distance from one baseline to the next.
+/// Metal slug: body, or body plus 1 or 2 points. Not an 8-dot snap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Leading {
-    /// Body size, snapped up onto the grid.
     Solid,
-    /// Body (snapped) plus extra grid units.
-    Extra(GridSkip),
+    Plus1,
+    Plus2,
 }
 
 impl Leading {
-    pub fn for_text(size: TextSize) -> Self {
-        match size {
-            TextSize::Pt8 => Leading::Extra(GridSkip::n(2).unwrap()),
-            TextSize::Pt11 => Leading::Extra(GridSkip::ONE),
-        }
+    pub fn for_text(_size: TextSize) -> Self {
+        Leading::Plus2
     }
 
     pub fn for_display(_size: DisplaySize) -> Self {
@@ -51,10 +51,10 @@ impl Leading {
     }
 
     pub fn skip_dots(self, body_dots: u16) -> u16 {
-        let solid = snap_up(body_dots);
         match self {
-            Leading::Solid => solid,
-            Leading::Extra(extra) => solid + extra.dots(),
+            Leading::Solid => body_dots,
+            Leading::Plus1 => body_dots + pt_dots(1.0),
+            Leading::Plus2 => body_dots + pt_dots(2.0),
         }
     }
 }
@@ -64,14 +64,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn skip_always_on_grid() {
-        for size in [TextSize::Pt8, TextSize::Pt11] {
-            let s = Leading::for_text(size).skip_dots(size.body_dots());
-            assert_eq!(s % GRID, 0, "text {size:?} skip {s}");
-        }
-        for size in [DisplaySize::Pt14, DisplaySize::Pt18, DisplaySize::Pt24] {
-            let s = Leading::for_display(size).skip_dots(size.body_dots());
-            assert_eq!(s % GRID, 0, "display {size:?} skip {s}");
-        }
+    fn skip_modules_on_grid() {
+        assert_eq!(GridSkip::ONE.dots() % GRID, 0);
+        assert_eq!(GridSkip::n(2).unwrap().dots() % GRID, 0);
+    }
+
+    #[test]
+    fn eleven_pt_plus1_is_34_dots() {
+        let body = TextSize::Pt11.body_dots();
+        assert_eq!(body, 31);
+        assert_eq!(Leading::Plus1.skip_dots(body), 34);
+        assert_eq!(Leading::Solid.skip_dots(body), 31);
+    }
+
+    #[test]
+    fn eleven_pt_plus2_is_37_dots() {
+        let body = TextSize::Pt11.body_dots();
+        assert_eq!(body, 31);
+        assert_eq!(Leading::Plus2.skip_dots(body), 37);
+        assert_eq!(Leading::for_text(TextSize::Pt11), Leading::Plus2);
     }
 }

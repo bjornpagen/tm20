@@ -8,6 +8,8 @@ pub enum Error {
     Font,
     NotFound { family: String },
     Overflow { width: u32, height: u32 },
+    HeadNotBold,
+    Columns,
     Io(io::Error),
     Protocol(tm20::Error),
     Encode(tm20::EncodeError),
@@ -21,6 +23,8 @@ impl fmt::Display for Error {
             Error::Overflow { width, height } => {
                 write!(f, "sheet raster {width}x{height} does not fit Graphics")
             }
+            Error::HeadNotBold => write!(f, "Head requires a Bold TextFace"),
+            Error::Columns => write!(f, "column widths plus gutters must equal the measure"),
             Error::Io(e) => write!(f, "{e}"),
             Error::Protocol(e) => write!(f, "{e}"),
             Error::Encode(e) => write!(f, "{e}"),

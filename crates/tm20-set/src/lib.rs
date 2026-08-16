@@ -12,11 +12,12 @@ mod specimens;
 
 pub use compose::compose;
 pub use error::Error;
-pub use face::{DisplayFace, Face, TextFace, Weight};
+pub use face::{DisplayFace, Face, Slope, TextFace, Weight};
 pub use frame::{
-    Frame, Mark, MarkAlign, Measure, Pair, Rule, Sheet, TextBlock, Thickness, Tracking,
+    Cell, Columns, Frame, Head, List, Mark, MarkAlign, Measure, Row, Rule, Sheet, Span, Table,
+    TextBlock, Thickness, Tracking, EN_DASH,
 };
-pub use leading::{GridSkip, Leading, GRID};
+pub use leading::{GridSkip, Leading, GRID, HANG};
 pub use lower::lower;
 pub use size::{DisplaySize, TextSize, DPI};
 
