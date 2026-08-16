@@ -1,0 +1,18 @@
+[package]
+name = "tm20"
+version = "0.1.0"
+edition = "2021"
+description = "ESC/POS for the Epson TM-T20III: a Command IR, an encoder, and transports"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "tm20"
+path = "src/bin/tm20.rs"
+
+[dependencies]
+nusb = "0.2"
+serialport = "4"
+fontdue = "0.9"
+harfrust = "0.13"
+font-kit = "0.14"
