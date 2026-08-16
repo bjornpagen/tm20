@@ -4,7 +4,10 @@ use font_kit::family_name::FamilyName;
 use font_kit::handle::Handle;
 use font_kit::properties::{Properties, Style as KitStyle, Weight as KitWeight};
 use font_kit::source::SystemSource;
-use tm20_set::{Cut, Face, FaceTable, GridSkip, Pair, Span, TextSize};
+use tm20_set::{
+    ColAlign, Cols, Cut, DecimalDelim, Face, FaceTable, Frame, GridSkip, List, Marker, Span,
+    TextBlock, TextSize,
+};
 
 pub fn table() -> FaceTable {
     let mut table = FaceTable::new();
@@ -38,13 +41,49 @@ pub fn table() -> FaceTable {
 }
 
 #[allow(dead_code)]
-pub fn pair<'a>(cut: Cut, item: &'a str, amount: &'a str) -> Pair<'a> {
-    Pair {
+pub fn cols<'a>(cut: Cut, item: &'a str, amount: &'a str) -> Cols<'a> {
+    Cols {
         size: TextSize::Pt11,
         gutter: GridSkip::ONE,
-        left: vec![Span { cut, text: item }],
-        figure: cut,
-        amount,
+        align: vec![ColAlign::Start, ColAlign::End],
+        rows: vec![vec![
+            vec![Span::new(cut, item)],
+            vec![Span::new(cut, amount)],
+        ]],
+    }
+}
+
+#[allow(dead_code)]
+pub fn item<'a>(text: &'a str) -> Vec<Frame<'a>> {
+    vec![Frame::Text(TextBlock::plain(
+        Cut::Roman,
+        TextSize::Pt11,
+        text,
+    ))]
+}
+
+#[allow(dead_code)]
+pub fn dash_list<'a>(items: Vec<Vec<Frame<'a>>>) -> List<'a> {
+    List {
+        size: TextSize::Pt11,
+        cut: Cut::Roman,
+        marker: Marker::Dash,
+        tight: true,
+        items,
+    }
+}
+
+#[allow(dead_code)]
+pub fn decimal_list<'a>(start: u32, items: Vec<Vec<Frame<'a>>>) -> List<'a> {
+    List {
+        size: TextSize::Pt11,
+        cut: Cut::Roman,
+        marker: Marker::Decimal {
+            start,
+            delim: DecimalDelim::Period,
+        },
+        tight: true,
+        items,
     }
 }
 

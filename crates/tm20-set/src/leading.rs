@@ -63,15 +63,7 @@ mod tests {
     #[test]
     fn eleven_pt_plus1_is_34_dots() {
         let body = TextSize::Pt11.body_dots();
-        assert_eq!(body, 31);
         assert_eq!(Leading::Plus1.skip_dots(body), 34);
-        assert_eq!(Leading::Solid.skip_dots(body), 31);
-    }
-
-    #[test]
-    fn eleven_pt_plus2_is_37_dots() {
-        let body = TextSize::Pt11.body_dots();
-        assert_eq!(body, 31);
-        assert_eq!(Leading::Plus2.skip_dots(body), 37);
+        assert_eq!(Leading::Solid.skip_dots(body), body);
     }
 }

@@ -31,17 +31,7 @@ fn lower_is_init_page_graphics_feed_cut() {
             .any(|c| matches!(c, Command::PrintSpeed(_))),
         "typesetter must not inject PrintSpeed"
     );
-}
-
-#[test]
-fn lower_encodes_gs_paren_l() {
-    let faces = common::table();
-    let sheet = Sheet::tape(vec![Frame::Text(TextBlock::plain(
-        Cut::Roman,
-        TextSize::Pt11,
-        "ok",
-    ))]);
-    let bytes = encode(&lower(&sheet, &faces).unwrap()).unwrap();
-    assert!(bytes.windows(3).any(|w| w == [0x1d, b'(', b'L']));
+    let bytes = encode(&doc).unwrap();
     assert_eq!(&bytes[..2], &[0x1b, 0x40]);
+    assert!(bytes.windows(3).any(|w| w == [0x1d, b'(', b'L']));
 }

@@ -1,13 +1,21 @@
 //! Small evaluator: [`Sheet`] + [`FaceTable`] → packed [`tm20::Graphics`].
 
+use std::borrow::Cow;
+use std::num::NonZeroU32;
+
 use crate::error::Error;
 use crate::face::{Cut, DisplayFace, Face, FaceTable, Shaped, TextFace};
-use crate::frame::{Frame, Head, List, MarkAlign, Pair, Sheet, Span, TextBlock, EN_DASH};
-use crate::leading::HANG;
+use crate::frame::{
+    decimal_text, ColAlign, Cols, Figure, Frame, Head, List, MarkAlign, Marker, Quote, Rule, Sheet,
+    TextBlock, Thickness, EN_DASH,
+};
+use crate::leading::{GRID, HANG};
 use crate::size::TextSize;
 use tm20::graphics::{pack, Graphics, GraphicsScale};
 
 const THRESHOLD: u8 = 96;
+const NEST_CAP: u8 = 3;
+const NOTE_RAISE: f32 = 0.4;
 
 struct Canvas {
     width: u16,
@@ -71,13 +79,13 @@ impl Canvas {
     }
 }
 
-/// What the last painted frame was, for adjacency. Text and List share [`Kind::Run`].
+/// What the last painted frame was, for adjacency. Text, List, Quote, and Figure share [`Kind::Run`].
 #[derive(Clone, Copy)]
 enum Kind {
     Mark { slug: u16 },
     Head,
     Run,
-    Pair,
+    Cols,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -85,7 +93,7 @@ enum Rhythm {
     Mark,
     Head,
     Run,
-    Pair,
+    Cols,
     Rule,
 }
 
@@ -195,8 +203,8 @@ fn rhythm(frame: &Frame<'_>) -> Rhythm {
     match frame {
         Frame::Mark(_) => Rhythm::Mark,
         Frame::Head(_) => Rhythm::Head,
-        Frame::Text(_) | Frame::List(_) => Rhythm::Run,
-        Frame::Pair(_) => Rhythm::Pair,
+        Frame::Text(_) | Frame::List(_) | Frame::Quote(_) | Frame::Figure(_) => Rhythm::Run,
+        Frame::Cols(_) => Rhythm::Cols,
         Frame::Rule(_) => Rhythm::Rule,
     }
 }
@@ -206,8 +214,10 @@ fn slug(frame: &Frame<'_>) -> u16 {
         Frame::Text(b) => b.size.skip_dots(),
         Frame::Head(h) => h.size.skip_dots(),
         Frame::List(l) => l.size.skip_dots(),
-        Frame::Pair(p) => p.size.skip_dots(),
+        Frame::Cols(c) => c.size.skip_dots(),
+        Frame::Quote(q) => q.frames.first().map(slug).unwrap_or(0),
         Frame::Mark(m) => m.size.skip_dots(),
+        Frame::Figure(_) => GRID,
         Frame::Rule(_) => 0,
     }
 }
@@ -216,20 +226,34 @@ fn extra(place: Place, to: Rhythm, next: u16) -> u16 {
     match place {
         Place::Origin { .. } => 0,
         Place::Rule { .. } => match to {
-            Rhythm::Pair => 0,
+            Rhythm::Cols => 0,
             Rhythm::Mark | Rhythm::Head | Rhythm::Run | Rhythm::Rule => next,
         },
         Place::Line { kind, .. } => match (kind, to) {
             (Kind::Mark { .. }, Rhythm::Mark | Rhythm::Rule) => 0,
             (Kind::Mark { slug }, _) => slug,
-            (Kind::Head, Rhythm::Run | Rhythm::Pair | Rhythm::Rule) => 0,
-            (Kind::Pair, Rhythm::Pair) => 0,
+            (Kind::Head, Rhythm::Run | Rhythm::Cols | Rhythm::Rule) => 0,
+            (Kind::Cols, Rhythm::Cols) => 0,
             (_, Rhythm::Head) => next,
-            (Kind::Run | Kind::Head, Rhythm::Run | Rhythm::Pair | Rhythm::Mark) => next,
-            (Kind::Pair, Rhythm::Run | Rhythm::Mark) => next,
-            (Kind::Run | Kind::Pair, Rhythm::Rule) => 0,
+            (Kind::Run | Kind::Head, Rhythm::Run | Rhythm::Cols | Rhythm::Mark) => next,
+            (Kind::Cols, Rhythm::Run | Rhythm::Mark) => next,
+            (Kind::Run | Kind::Cols, Rhythm::Rule) => 0,
         },
     }
+}
+
+struct MarkInk<'a> {
+    x: f32,
+    face: &'a TextFace,
+    shaped: Shaped,
+    px: f32,
+}
+
+struct Cx<'a, 'f> {
+    canvas: &'a mut Canvas,
+    cur: &'a mut Cursor,
+    faces: &'f FaceTable,
+    pending: Vec<MarkInk<'f>>,
 }
 
 /// Layout `sheet` onto one 1-bit canvas and pack it.
@@ -237,179 +261,420 @@ pub fn compose(sheet: &Sheet<'_>, faces: &FaceTable) -> Result<Graphics, Error> 
     let width = sheet.width.get();
     let mut canvas = Canvas::new(width);
     let mut cur = Cursor::new();
-
-    for frame in &sheet.frames {
-        cur.bump(extra(cur.place, rhythm(frame), slug(frame)));
-        match frame {
-            Frame::Rule(rule) => {
-                let y = canvas.height.max(cur.slug_bottom().ceil() as u16);
-                for dy in 0..rule.thickness.dots() {
-                    canvas.fill_row(y + dy, 0, width);
-                }
-                cur.set_rule((y + rule.thickness.dots()) as f32);
-            }
-            Frame::Mark(mark) => {
-                let face = faces.display(mark.cut)?;
-                let shaped = face.shape(mark.text, mark.size, mark.tracking.0);
-                let skip = mark.size.skip_dots();
-                let ascent = shaped_ink_ascent(face.inner(), DisplayFace::px(mark.size), &shaped);
-                let b = cur.first_baseline(ascent, skip, Kind::Mark { slug: skip });
-                let x0 = match mark.align {
-                    MarkAlign::Start => 0.0,
-                    MarkAlign::Center => ((width as f32 - shaped.width) * 0.5).max(0.0),
-                };
-                blit(
-                    &mut canvas,
-                    face.inner(),
-                    DisplayFace::px(mark.size),
-                    x0,
-                    b,
-                    &shaped,
-                );
-            }
-            Frame::Text(block) => {
-                paint_run(&mut canvas, &mut cur, width, block, faces, Kind::Run)?;
-            }
-            Frame::Head(head) => {
-                paint_head(&mut canvas, &mut cur, width, head, faces)?;
-            }
-            Frame::Pair(pair) => {
-                paint_pair(&mut canvas, &mut cur, width, pair, faces)?;
-            }
-            Frame::List(list) => {
-                paint_list(&mut canvas, &mut cur, width, list, faces)?;
-            }
-        }
+    let mut cx = Cx {
+        canvas: &mut canvas,
+        cur: &mut cur,
+        faces,
+        pending: Vec::new(),
+    };
+    paint_seq(&mut cx, &sheet.frames, 0, width, 0, 0, false)?;
+    if !sheet.notes.is_empty() {
+        paint_notes(&mut cx, width, &sheet.notes)?;
     }
-
     canvas.into_graphics()
 }
 
-fn paint_head(
-    canvas: &mut Canvas,
-    cur: &mut Cursor,
-    width: u16,
-    head: &Head<'_>,
-    faces: &FaceTable,
+fn paint_seq(
+    cx: &mut Cx<'_, '_>,
+    frames: &[Frame<'_>],
+    x0: u16,
+    measure: u16,
+    quote_depth: u8,
+    list_depth: u8,
+    first_continues: bool,
 ) -> Result<(), Error> {
-    let block = TextBlock::plain(Cut::Bold, head.size, head.text);
-    paint_run(canvas, cur, width, &block, faces, Kind::Head)
+    if frames.is_empty() {
+        let b = cx.cur.first_baseline(0.0, GRID, Kind::Run);
+        flush_marks(cx, b);
+        return Ok(());
+    }
+    for (i, frame) in frames.iter().enumerate() {
+        if !(i == 0 && first_continues) {
+            cx.cur.bump(extra(cx.cur.place, rhythm(frame), slug(frame)));
+        }
+        paint_one(cx, frame, x0, measure, quote_depth, list_depth)?;
+    }
+    Ok(())
+}
+
+fn paint_one(
+    cx: &mut Cx<'_, '_>,
+    frame: &Frame<'_>,
+    x0: u16,
+    measure: u16,
+    quote_depth: u8,
+    list_depth: u8,
+) -> Result<(), Error> {
+    match frame {
+        Frame::Rule(rule) => paint_rule(cx, rule, x0, measure),
+        Frame::Mark(mark) => paint_mark(cx, mark, x0, measure),
+        Frame::Text(block) => paint_run(cx, block, x0, measure, Kind::Run),
+        Frame::Head(head) => paint_head(cx, head, x0, measure),
+        Frame::Cols(cols) => paint_cols(cx, cols, x0, measure),
+        Frame::List(list) => paint_list(cx, list, x0, measure, quote_depth, list_depth),
+        Frame::Quote(quote) => paint_quote(cx, quote, x0, measure, quote_depth, list_depth),
+        Frame::Figure(fig) => paint_figure(cx, fig, x0, measure),
+    }
+}
+
+fn paint_rule(cx: &mut Cx<'_, '_>, rule: &Rule, x0: u16, measure: u16) -> Result<(), Error> {
+    let y = cx.canvas.height.max(cx.cur.slug_bottom().ceil() as u16);
+    flush_marks(cx, y as f32);
+    let x1 = x0.saturating_add(measure);
+    for dy in 0..rule.thickness.dots() {
+        cx.canvas.fill_row(y + dy, x0, x1);
+    }
+    cx.cur.set_rule((y + rule.thickness.dots()) as f32);
+    Ok(())
+}
+
+fn paint_mark(
+    cx: &mut Cx<'_, '_>,
+    mark: &crate::frame::Mark<'_>,
+    x0: u16,
+    measure: u16,
+) -> Result<(), Error> {
+    let faces = cx.faces;
+    let face = faces.display(mark.cut)?;
+    let shaped = face.shape(mark.text.as_ref(), mark.size, mark.tracking.0);
+    let skip = mark.size.skip_dots();
+    let ascent = shaped_ink_ascent(face.inner(), DisplayFace::px(mark.size), &shaped);
+    let b = cx
+        .cur
+        .first_baseline(ascent, skip, Kind::Mark { slug: skip });
+    flush_marks(cx, b);
+    let x = match mark.align {
+        MarkAlign::Start => x0 as f32,
+        MarkAlign::Center => x0 as f32 + ((measure as f32 - shaped.width) * 0.5).max(0.0),
+    };
+    blit(
+        cx.canvas,
+        face.inner(),
+        DisplayFace::px(mark.size),
+        x,
+        b,
+        &shaped,
+    );
+    Ok(())
+}
+
+fn paint_head(cx: &mut Cx<'_, '_>, head: &Head<'_>, x0: u16, measure: u16) -> Result<(), Error> {
+    let block = TextBlock::plain(Cut::Bold, head.size, head.text.as_ref());
+    paint_run(cx, &block, x0, measure, Kind::Head)
 }
 
 fn paint_run(
-    canvas: &mut Canvas,
-    cur: &mut Cursor,
-    width: u16,
+    cx: &mut Cx<'_, '_>,
     block: &TextBlock<'_>,
-    faces: &FaceTable,
+    x0: u16,
+    measure: u16,
     kind: Kind,
 ) -> Result<(), Error> {
-    let measure = width.max(1);
+    let measure = measure.max(1);
     let skip = block.size.skip_dots();
-    let lines = wrap_spans(block.size, &block.spans, measure as f32, faces)?;
+    let lines = wrap_spans(block.size, &block.spans, measure as f32, cx.faces, false)?;
     for (li, line) in lines.iter().enumerate() {
         let ascent = line_ascent(block.size, line);
         let b = if li == 0 {
-            cur.first_baseline(ascent, skip, kind)
+            cx.cur.first_baseline(ascent, skip, kind)
         } else {
-            cur.later_baseline(ascent, skip)
+            cx.cur.later_baseline(ascent, skip)
         };
-        paint_line(canvas, block.size, 0.0, b, line);
+        if li == 0 {
+            flush_marks(cx, b);
+        }
+        paint_line(cx, block.size, x0 as f32, b, line)?;
     }
     Ok(())
 }
 
-fn paint_pair(
-    canvas: &mut Canvas,
-    cur: &mut Cursor,
-    width: u16,
-    pair: &Pair<'_>,
-    faces: &FaceTable,
+fn paint_quote(
+    cx: &mut Cx<'_, '_>,
+    quote: &Quote<'_>,
+    x0: u16,
+    measure: u16,
+    quote_depth: u8,
+    list_depth: u8,
 ) -> Result<(), Error> {
-    let skip = pair.size.skip_dots();
-    let fig = faces.text(pair.figure)?;
-    let shaped = fig.shape_figure(pair.amount, pair.size);
-    let fig_w = shaped.width.ceil().max(1.0) as u16;
-    let left_w = width
-        .saturating_sub(pair.gutter.dots())
-        .saturating_sub(fig_w)
-        .max(1);
-    let lines = wrap_spans(pair.size, &pair.left, left_w as f32, faces)?;
-    let fig_ascent = shaped_ink_ascent(fig.inner(), TextFace::px(pair.size), &shaped);
-    let first_ascent = lines
-        .first()
-        .map(|l| line_ascent(pair.size, l))
-        .unwrap_or(0.0)
-        .max(fig_ascent);
-    let n = lines.len().max(1);
-    for li in 0..n {
-        let ascent = if li == 0 {
-            first_ascent
-        } else {
-            line_ascent(pair.size, &lines[li])
-        };
-        let b = if li == 0 {
-            cur.first_baseline(ascent, skip, Kind::Pair)
-        } else {
-            cur.later_baseline(ascent, skip)
-        };
-        if let Some(line) = lines.get(li) {
-            paint_line(canvas, pair.size, 0.0, b, line);
-        }
-        if li == 0 {
-            let x = (width as f32 - shaped.width).max(0.0);
-            blit(canvas, fig.inner(), TextFace::px(pair.size), x, b, &shaped);
+    if quote_depth >= NEST_CAP {
+        return Err(Error::Nesting);
+    }
+    let x = x0.saturating_add(GRID);
+    let w = measure.saturating_sub(GRID).max(1);
+    paint_seq(cx, &quote.frames, x, w, quote_depth + 1, list_depth, true)
+}
+
+fn paint_figure(cx: &mut Cx<'_, '_>, fig: &Figure, x0: u16, measure: u16) -> Result<(), Error> {
+    let b = cx.cur.first_baseline(0.0, GRID, Kind::Run);
+    flush_marks(cx, b);
+    let top = b.round().max(0.0) as u16;
+    blit_figure(cx.canvas, x0, top, fig, measure);
+    let bottom = top as f32 + fig.height as f32;
+    cx.cur.place = Place::Line {
+        baseline: bottom,
+        slug_bottom: bottom + GRID as f32,
+        kind: Kind::Run,
+    };
+    Ok(())
+}
+
+fn blit_figure(canvas: &mut Canvas, x0: u16, y0: u16, fig: &Figure, max_w: u16) {
+    let w = fig.width.min(max_w);
+    for y in 0..fig.height {
+        for x in 0..w {
+            if fig.bits[y as usize * fig.width as usize + x as usize] {
+                canvas.set(x0 as i32 + x as i32, y0 as i32 + y as i32);
+            }
         }
     }
-    Ok(())
+}
+
+fn paint_notes(cx: &mut Cx<'_, '_>, width: u16, notes: &[Cow<'_, str>]) -> Result<(), Error> {
+    let rule = Rule {
+        thickness: Thickness::One,
+    };
+    cx.cur.bump(extra(cx.cur.place, Rhythm::Rule, 0));
+    paint_rule(cx, &rule, 0, width)?;
+    let items: Vec<Vec<Frame<'_>>> = notes
+        .iter()
+        .map(|n| {
+            vec![Frame::Text(TextBlock::plain(
+                Cut::Roman,
+                TextSize::Pt8,
+                n.as_ref(),
+            ))]
+        })
+        .collect();
+    let list = List {
+        size: TextSize::Pt8,
+        cut: Cut::Roman,
+        marker: Marker::Decimal {
+            start: 1,
+            delim: crate::frame::DecimalDelim::Period,
+        },
+        tight: true,
+        items,
+    };
+    cx.cur
+        .bump(extra(cx.cur.place, Rhythm::Run, list.size.skip_dots()));
+    paint_list(cx, &list, 0, width, 0, 0)
 }
 
 fn paint_list(
-    canvas: &mut Canvas,
-    cur: &mut Cursor,
-    width: u16,
+    cx: &mut Cx<'_, '_>,
     list: &List<'_>,
-    faces: &FaceTable,
+    x0: u16,
+    measure: u16,
+    quote_depth: u8,
+    list_depth: u8,
 ) -> Result<(), Error> {
+    if list_depth >= NEST_CAP {
+        return Err(Error::Nesting);
+    }
+    let faces = cx.faces;
     let hang = list.hang_dots(faces)?;
-    let measure = (width.saturating_sub(hang)).max(1);
-    let skip = list.size.skip_dots();
+    let content_x = x0.saturating_add(hang);
+    let content_w = measure.saturating_sub(hang).max(1);
     let face = faces.text(list.cut)?;
-    let dash = face.shape(EN_DASH, list.size);
-    let dash_ascent = shaped_ink_ascent(face.inner(), TextFace::px(list.size), &dash);
-    for (ii, item) in list.items.iter().enumerate() {
-        let lines = wrap_spans(list.size, item, measure as f32, faces)?;
-        for (li, line) in lines.iter().enumerate() {
-            let ascent = line_ascent(list.size, line).max(dash_ascent);
-            let b = if ii == 0 && li == 0 {
-                cur.first_baseline(ascent, skip, Kind::Run)
-            } else {
-                cur.later_baseline(ascent, skip)
-            };
-            if li == 0 {
-                blit(canvas, face.inner(), TextFace::px(list.size), 0.0, b, &dash);
+    let space = face.shape(" ", list.size).width;
+    let px = TextFace::px(list.size);
+    for (i, item) in list.items.iter().enumerate() {
+        let (mx, shaped) = match list.marker {
+            Marker::Dash => (x0 as f32, face.shape(EN_DASH, list.size)),
+            Marker::Decimal { start, delim } => {
+                let t = decimal_text(start.saturating_add(i as u32), delim);
+                let s = face.shape_figure(&t, list.size);
+                let x = (x0 as f32 + hang as f32 - space - s.width).max(x0 as f32);
+                (x, s)
             }
-            paint_line(canvas, list.size, hang as f32, b, line);
+        };
+        cx.pending.push(MarkInk {
+            x: mx,
+            face,
+            shaped,
+            px,
+        });
+        let tight_continue = list.tight && i > 0;
+        paint_seq(
+            cx,
+            item,
+            content_x,
+            content_w,
+            quote_depth,
+            list_depth + 1,
+            tight_continue,
+        )?;
+    }
+    Ok(())
+}
+
+fn paint_cols(cx: &mut Cx<'_, '_>, cols: &Cols<'_>, x0: u16, measure: u16) -> Result<(), Error> {
+    let n = cols.align.len();
+    if !(2..=3).contains(&n) {
+        return Err(Error::Cols);
+    }
+    for row in &cols.rows {
+        if row.len() != n {
+            return Err(Error::Cols);
+        }
+    }
+    if cols.rows.is_empty() {
+        let b = cx
+            .cur
+            .first_baseline(0.0, cols.size.skip_dots(), Kind::Cols);
+        flush_marks(cx, b);
+        return Ok(());
+    }
+    let gutter = cols.gutter.dots();
+    let gutters = gutter * (n as u16 - 1);
+    let inner = measure.saturating_sub(gutters).max(1);
+    let widths = col_widths(cols, n, inner, cx.faces)?;
+    let skip = cols.size.skip_dots();
+    for (ri, row) in cols.rows.iter().enumerate() {
+        let mut cell_lines = Vec::with_capacity(n);
+        for (c, cell) in row.iter().enumerate() {
+            let figure = cols.align[c] == ColAlign::End;
+            cell_lines.push(wrap_spans(
+                cols.size,
+                cell,
+                widths[c] as f32,
+                cx.faces,
+                figure,
+            )?);
+        }
+        let nlines = cell_lines.iter().map(|l| l.len().max(1)).max().unwrap_or(1);
+        for li in 0..nlines {
+            let mut ascent = 0.0f32;
+            for lines in &cell_lines {
+                if let Some(line) = lines.get(li) {
+                    ascent = ascent.max(line_ascent(cols.size, line));
+                }
+            }
+            let b = if ri == 0 && li == 0 {
+                cx.cur.first_baseline(ascent, skip, Kind::Cols)
+            } else {
+                cx.cur.later_baseline(ascent, skip)
+            };
+            if ri == 0 && li == 0 {
+                flush_marks(cx, b);
+            }
+            let mut x = x0 as f32;
+            for c in 0..n {
+                if let Some(line) = cell_lines[c].get(li) {
+                    let notes = note_face_of(cx.faces, line)?;
+                    let lw = line_width(cols.size, line, notes);
+                    let lx = if cols.align[c] == ColAlign::End {
+                        x + (widths[c] as f32 - lw).max(0.0)
+                    } else {
+                        x
+                    };
+                    paint_line(cx, cols.size, lx, b, line)?;
+                }
+                x += widths[c] as f32 + gutter as f32;
+            }
         }
     }
     Ok(())
+}
+
+fn col_widths(cols: &Cols<'_>, n: usize, inner: u16, faces: &FaceTable) -> Result<Vec<u16>, Error> {
+    let mut widths = vec![0u16; n];
+    let mut end_sum = 0u16;
+    let mut start_n = 0u16;
+    for (c, align) in cols.align.iter().enumerate() {
+        if *align == ColAlign::Start {
+            start_n += 1;
+            continue;
+        }
+        let mut w = 1u16;
+        for row in &cols.rows {
+            let lines = wrap_spans(cols.size, &row[c], inner as f32, faces, true)?;
+            let mut lw = 0.0f32;
+            for line in &lines {
+                let notes = note_face_of(faces, line)?;
+                lw = lw.max(line_width(cols.size, line, notes));
+            }
+            w = w.max(lw.ceil().max(1.0) as u16);
+        }
+        w = w.min(inner);
+        widths[c] = w;
+        end_sum = end_sum.saturating_add(w);
+    }
+    if end_sum > inner {
+        let mut used = 0u16;
+        for (c, align) in cols.align.iter().enumerate() {
+            if *align == ColAlign::End {
+                widths[c] = ((widths[c] as u32 * inner as u32) / end_sum.max(1) as u32) as u16;
+                widths[c] = widths[c].max(1);
+                used = used.saturating_add(widths[c]);
+            }
+        }
+        end_sum = used;
+    }
+    let leftover = inner.saturating_sub(end_sum);
+    if start_n == 0 {
+        return Ok(widths);
+    }
+    let each = (leftover / start_n).max(1);
+    let mut rem = leftover.saturating_sub(each * start_n);
+    for (c, align) in cols.align.iter().enumerate() {
+        if *align == ColAlign::Start {
+            widths[c] = each + u16::from(rem > 0);
+            rem = rem.saturating_sub(1);
+        }
+    }
+    Ok(widths)
+}
+
+fn note_face_of<'f>(
+    faces: &'f FaceTable,
+    line: &[LineSpan<'_>],
+) -> Result<Option<&'f TextFace>, Error> {
+    if line.iter().any(|p| p.note.is_some()) {
+        Ok(Some(faces.text(Cut::Roman)?))
+    } else {
+        Ok(None)
+    }
+}
+
+fn flush_marks(cx: &mut Cx<'_, '_>, baseline: f32) {
+    let pending = std::mem::take(&mut cx.pending);
+    for m in pending {
+        blit(cx.canvas, m.face.inner(), m.px, m.x, baseline, &m.shaped);
+    }
 }
 
 #[derive(Clone)]
 struct LineSpan<'a> {
     face: &'a TextFace,
     text: String,
+    note: Option<NonZeroU32>,
+    figure: bool,
 }
 
-fn paint_line(canvas: &mut Canvas, size: TextSize, x0: f32, baseline: f32, line: &[LineSpan<'_>]) {
+struct Word<'a> {
+    face: &'a TextFace,
+    text: String,
+    note: Option<NonZeroU32>,
+    figure: bool,
+}
+
+fn paint_line(
+    cx: &mut Cx<'_, '_>,
+    size: TextSize,
+    x0: f32,
+    baseline: f32,
+    line: &[LineSpan<'_>],
+) -> Result<(), Error> {
     let mut x = x0;
+    let note_face = note_face_of(cx.faces, line)?;
     for (i, piece) in line.iter().enumerate() {
         if i > 0 {
             x += piece.face.shape(" ", size).width;
         }
-        let shaped = piece.face.shape(&piece.text, size);
+        let shaped = shape_piece(size, piece);
         blit(
-            canvas,
+            cx.canvas,
             piece.face.inner(),
             TextFace::px(size),
             x,
@@ -417,13 +682,37 @@ fn paint_line(canvas: &mut Canvas, size: TextSize, x0: f32, baseline: f32, line:
             &shaped,
         );
         x += shaped.width;
+        if let Some(n) = piece.note {
+            let face = note_face.expect("note_face_of checked");
+            let label = n.get().to_string();
+            let note = face.shape(&label, TextSize::Pt8);
+            let raise = TextFace::px(size) * NOTE_RAISE;
+            blit(
+                cx.canvas,
+                face.inner(),
+                TextFace::px(TextSize::Pt8),
+                x,
+                baseline - raise,
+                &note,
+            );
+            x += note.width;
+        }
+    }
+    Ok(())
+}
+
+fn shape_piece(size: TextSize, piece: &LineSpan<'_>) -> Shaped {
+    if piece.figure {
+        piece.face.shape_figure(&piece.text, size)
+    } else {
+        piece.face.shape(&piece.text, size)
     }
 }
 
 fn line_ascent(size: TextSize, line: &[LineSpan<'_>]) -> f32 {
     line.iter()
         .map(|p| {
-            let shaped = p.face.shape(&p.text, size);
+            let shaped = shape_piece(size, p);
             shaped_ink_ascent(p.face.inner(), TextFace::px(size), &shaped)
         })
         .fold(0.0f32, f32::max)
@@ -447,40 +736,105 @@ fn shaped_ink_ascent(face: &Face, px: f32, shaped: &Shaped) -> f32 {
 
 fn wrap_spans<'f>(
     size: TextSize,
-    spans: &[Span<'_>],
+    spans: &[crate::frame::Span<'_>],
     measure: f32,
     faces: &'f FaceTable,
+    figure: bool,
 ) -> Result<Vec<Vec<LineSpan<'f>>>, Error> {
-    let mut out = Vec::new();
-    let mut line: Vec<LineSpan<'f>> = Vec::new();
+    let note_face = if spans.iter().any(|s| s.note.is_some()) {
+        Some(faces.text(Cut::Roman)?)
+    } else {
+        None
+    };
+    let mut chunks: Vec<Vec<Word<'f>>> = vec![Vec::new()];
+    let mut empty_face: Option<&'f TextFace> = None;
     for span in spans {
         let face = faces.text(span.cut)?;
-        for (hi, hard) in span.text.split('\n').enumerate() {
-            if hi > 0 && !line.is_empty() {
-                out.push(std::mem::take(&mut line));
+        empty_face = Some(face);
+        let text = span.text.as_ref();
+        for (hi, hard) in text.split('\n').enumerate() {
+            if hi > 0 {
+                chunks.push(Vec::new());
             }
-            if hard.is_empty() {
-                if line.is_empty() {
-                    out.push(vec![LineSpan {
-                        face,
-                        text: String::new(),
-                    }]);
-                }
-                continue;
+            let words: Vec<&str> = hard.split(' ').filter(|w| !w.is_empty()).collect();
+            let n = words.len();
+            for (wi, word) in words.into_iter().enumerate() {
+                let note = if wi + 1 == n { span.note } else { None };
+                chunks.last_mut().unwrap().push(Word {
+                    face,
+                    text: word.to_string(),
+                    note,
+                    figure,
+                });
             }
-            for word in hard.split(' ') {
-                if word.is_empty() {
-                    continue;
-                }
-                let mut trial = line.clone();
-                push_word(&mut trial, face, word);
-                if line_width(size, &trial) <= measure || line.is_empty() {
-                    line = trial;
-                } else {
-                    out.push(std::mem::take(&mut line));
-                    push_word(&mut line, face, word);
-                }
+        }
+    }
+    let mut out = Vec::new();
+    for chunk in chunks {
+        if chunk.is_empty() {
+            if let Some(face) = empty_face {
+                out.push(vec![LineSpan {
+                    face,
+                    text: String::new(),
+                    note: None,
+                    figure,
+                }]);
+            } else {
+                out.push(Vec::new());
             }
+            continue;
+        }
+        out.extend(wrap_chunk(size, &chunk, measure, note_face));
+    }
+    if out.is_empty() {
+        out.push(Vec::new());
+    }
+    Ok(out)
+}
+
+fn wrap_chunk<'f>(
+    size: TextSize,
+    words: &[Word<'f>],
+    measure: f32,
+    note_face: Option<&'f TextFace>,
+) -> Vec<Vec<LineSpan<'f>>> {
+    let greedy = wrap_greedy(size, words, measure, note_face);
+    let n = greedy.len();
+    if n <= 1 {
+        return greedy;
+    }
+    let mut lo = 0.0f32;
+    let mut hi = measure;
+    for _ in 0..40 {
+        let mid = (lo + hi) * 0.5;
+        if wrap_greedy(size, words, mid, note_face).len() <= n {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+        if hi - lo < 0.25 {
+            break;
+        }
+    }
+    wrap_greedy(size, words, hi, note_face)
+}
+
+fn wrap_greedy<'f>(
+    size: TextSize,
+    words: &[Word<'f>],
+    measure: f32,
+    note_face: Option<&'f TextFace>,
+) -> Vec<Vec<LineSpan<'f>>> {
+    let mut out = Vec::new();
+    let mut line: Vec<LineSpan<'f>> = Vec::new();
+    for word in words {
+        let mut trial = line.clone();
+        push_word(&mut trial, word);
+        if line_width(size, &trial, note_face) <= measure || line.is_empty() {
+            line = trial;
+        } else {
+            out.push(std::mem::take(&mut line));
+            push_word(&mut line, word);
         }
     }
     if !line.is_empty() {
@@ -489,29 +843,42 @@ fn wrap_spans<'f>(
     if out.is_empty() {
         out.push(Vec::new());
     }
-    Ok(out)
+    out
 }
 
-fn push_word<'a>(line: &mut Vec<LineSpan<'a>>, face: &'a TextFace, word: &str) {
+fn push_word<'a>(line: &mut Vec<LineSpan<'a>>, word: &Word<'a>) {
     match line.last_mut() {
-        Some(prev) if std::ptr::eq(prev.face, face) && !prev.text.is_empty() => {
+        Some(prev)
+            if std::ptr::eq(prev.face, word.face)
+                && prev.figure == word.figure
+                && prev.note.is_none()
+                && !prev.text.is_empty() =>
+        {
             prev.text.push(' ');
-            prev.text.push_str(word);
+            prev.text.push_str(&word.text);
+            prev.note = word.note;
         }
         _ => line.push(LineSpan {
-            face,
-            text: word.to_string(),
+            face: word.face,
+            text: word.text.clone(),
+            note: word.note,
+            figure: word.figure,
         }),
     }
 }
 
-fn line_width(size: TextSize, line: &[LineSpan<'_>]) -> f32 {
+fn line_width(size: TextSize, line: &[LineSpan<'_>], note_face: Option<&TextFace>) -> f32 {
     let mut w = 0.0;
     for (i, piece) in line.iter().enumerate() {
         if i > 0 {
             w += piece.face.shape(" ", size).width;
         }
-        w += piece.face.shape(&piece.text, size).width;
+        w += shape_piece(size, piece).width;
+        if let Some(n) = piece.note {
+            if let Some(face) = note_face {
+                w += face.shape(&n.get().to_string(), TextSize::Pt8).width;
+            }
+        }
     }
     w
 }

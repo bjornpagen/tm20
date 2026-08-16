@@ -15,8 +15,8 @@ pub use compose::compose;
 pub use error::Error;
 pub use face::{Cut, DisplayFace, Face, FaceTable, TextFace};
 pub use frame::{
-    Frame, Head, List, Mark, MarkAlign, Measure, Pair, Rule, Sheet, Span, TextBlock, Thickness,
-    Tracking, EN_DASH,
+    ColAlign, Cols, DecimalDelim, Figure, Frame, Head, List, Mark, MarkAlign, Marker, Measure,
+    Quote, Rule, Sheet, Span, TextBlock, Thickness, Tracking, EN_DASH,
 };
 pub use leading::{GridSkip, Leading, GRID, HANG};
 pub use lower::lower;

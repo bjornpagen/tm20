@@ -74,4 +74,16 @@ mod tests {
     fn eleven_pt_skip_is_plus2() {
         assert_eq!(TextSize::Pt11.skip_dots(), 37);
     }
+
+    #[test]
+    fn eight_pt_skip_is_plus2() {
+        assert_eq!(TextSize::Pt8.body_dots(), 23);
+        assert_eq!(TextSize::Pt8.skip_dots(), 29);
+    }
+
+    #[test]
+    fn display_eighteen_is_solid() {
+        assert_eq!(DisplaySize::Pt18.body_dots(), 51);
+        assert_eq!(DisplaySize::Pt18.skip_dots(), 51);
+    }
 }

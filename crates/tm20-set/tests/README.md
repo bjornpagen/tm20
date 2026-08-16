@@ -1,32 +1,32 @@
 # tm20-set tests
 
-Paper cases for the typesetter, the same job as `tm20`’s encode goldens and
-selftest catalog. `cargo test -p tm20-set` does not need a printer. It loads
-a [`FaceTable`] from the system sans, the same way the binary’s ticket sheet
-does. It does not name Neue Haas Grotesk.
+`cargo test -p tm20-set` does not need a printer. It loads a [`FaceTable`] from
+the system sans, the same way the binary’s ticket sheet does. It does not name
+Neue Haas Grotesk.
 
-## What is tested
+Constructor checks that do not need a face live next to the type. Compose
+proofs live in `tests/`. Each test is one fact.
 
-- **`algebra.rs`** — compose adjacency: paragraph blank line, Head sticks, Mark
-  air, rule slug, pair hang from a rule, list mark column, tape width, pair ink
-  on both sides. Missing cuts error.
-- **`lower.rs`** — a Sheet lowers to Init, PC437, Graphics, Feed 3, partial
-  cut. No `PrintSpeed`. Encoded bytes contain `GS ( L`.
-- **`frames.rs`** — every `Frame` variant composes and encodes (the catalog
-  analog). A new variant fails the exhaustive match until a case is added.
+## Next to the type
 
-Constructor checks that do not need a face stay next to the type:
-Plus2 = 37 dots at 11 pt.
+- **`size`** — 11 pt = 31 dots, Plus2 skip 37; 8 pt Plus2 29; display 18 solid 51
+- **`leading`** — `GridSkip` on 8; Plus1 at 11 pt is 34; Solid equals body
+- **`frame`** — `Measure::new(0)` is none; ragged figure bits and bad image bytes error; PNG scales to the measure
+- **`face`** — garbage bytes are `Error::Font`
 
-## Mechanism vs policy
+## Compose (`algebra.rs`)
 
-The library takes a `Sheet` of `Cut`s and a `FaceTable`. It does not read
-files or look up a family. Tests and the `tm20-set` binary load bytes (system
-sans or `~/Library/Fonts`) and insert them into the table.
+Tape width. Closed sizes. Wrap taller than one line; last line a sibling of the others. Paragraph blank vs hard break. Head sticks; Mark has more air, can center, tracking widens. Rule clears the slug; Two is two rows. Columns: ink both sides, hang from a rule (text does not), consecutive tables tight, start column wraps, three columns compose, illegal shape errors. List: dash runover clears the mark column; decimal hang fits the widest marker; loose taller than tight; item blocks are paragraphs; nest cap 3. Quote hang is `GRID`; nest cap 3. Figure blits. Notes after a rule. Missing text/display cuts error.
+
+## Catalog analog (`frames.rs`)
+
+Every `Frame` variant lowers and encodes. Mixed cuts live on the `Text` case. A new variant fails the exhaustive match.
+
+## Lower (`lower.rs`)
+
+Init, PC437, Graphics, Feed 3, partial cut. No `PrintSpeed`. Bytes start with `ESC @` and contain `GS ( L`.
 
 ## Residuals the engine still chooses
-
-These are this typesetter’s rhythm, not house-face policy. Tests assume them:
 
 - text leading is Plus2 (11 pt → 37 dots)
 - `HANG` is 3 dots (type under a form rule)

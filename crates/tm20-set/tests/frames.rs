@@ -1,11 +1,10 @@
-//! Catalog analog: every Frame variant composes and encodes.
+//! Catalog analog: every Frame variant lowers. A new variant fails the match.
 
 mod common;
 
 use tm20::encode::encode;
-use tm20::PRINTABLE_DOTS;
 use tm20_set::{
-    compose, lower, Cut, DisplaySize, Frame, Head, List, Mark, MarkAlign, Rule, Sheet, Span,
+    lower, Cut, DisplaySize, Figure, Frame, Head, Mark, MarkAlign, Quote, Rule, Sheet, Span,
     TextBlock, TextSize, Thickness, Tracking,
 };
 
@@ -14,35 +13,43 @@ fn cover(frame: &Frame<'_>) {
         Frame::Text(_)
         | Frame::Head(_)
         | Frame::Mark(_)
-        | Frame::Pair(_)
+        | Frame::Cols(_)
         | Frame::List(_)
+        | Frame::Quote(_)
+        | Frame::Figure(_)
         | Frame::Rule(_) => {}
     }
 }
 
 fn kinds() -> Vec<Frame<'static>> {
     vec![
-        Frame::Text(TextBlock::plain(Cut::Roman, TextSize::Pt11, "Hello")),
+        Frame::Text(TextBlock {
+            size: TextSize::Pt11,
+            spans: vec![
+                Span::new(Cut::Roman, "Hello "),
+                Span::new(Cut::Italic, "there, "),
+                Span::new(Cut::Bold, "now."),
+            ],
+        }),
         Frame::Head(Head {
             size: TextSize::Pt11,
-            text: "Head",
+            text: "Head".into(),
         }),
         Frame::Mark(Mark {
             cut: Cut::Roman,
             size: DisplaySize::Pt18,
-            text: "MARK",
+            text: "MARK".into(),
             align: MarkAlign::Start,
             tracking: Tracking(0),
         }),
-        Frame::Pair(common::pair(Cut::Roman, "Coffee", "$1")),
-        Frame::List(List {
-            size: TextSize::Pt11,
-            cut: Cut::Roman,
-            items: vec![vec![Span {
-                cut: Cut::Roman,
-                text: "An item on the tape.",
-            }]],
+        Frame::Cols(common::cols(Cut::Roman, "Coffee", "$1")),
+        Frame::List(common::dash_list(vec![common::item(
+            "An item on the tape.",
+        )])),
+        Frame::Quote(Quote {
+            frames: common::item("Quoted."),
         }),
+        Frame::Figure(Figure::from_bits(8, 8, vec![true; 64]).unwrap()),
         Frame::Rule(Rule {
             thickness: Thickness::Two,
         }),
@@ -53,58 +60,9 @@ fn kinds() -> Vec<Frame<'static>> {
 fn every_frame_kind_encodes() {
     let faces = common::table();
     let frames = kinds();
-    assert_eq!(frames.len(), 6);
+    assert_eq!(frames.len(), 8);
     for frame in frames {
         cover(&frame);
-        let sheet = Sheet::tape(vec![frame]);
-        let g = compose(&sheet, &faces).unwrap();
-        assert_eq!(g.width_dots, PRINTABLE_DOTS);
-        encode(&lower(&sheet, &faces).unwrap()).unwrap();
+        encode(&lower(&Sheet::tape(vec![frame]), &faces).unwrap()).unwrap();
     }
-}
-
-#[test]
-fn mixed_adjacency_encodes() {
-    let faces = common::table();
-    let sheet = Sheet::tape(vec![
-        Frame::Mark(Mark {
-            cut: Cut::Roman,
-            size: DisplaySize::Pt18,
-            text: "MARK",
-            align: MarkAlign::Start,
-            tracking: Tracking(0),
-        }),
-        Frame::Rule(Rule {
-            thickness: Thickness::Two,
-        }),
-        Frame::Head(Head {
-            size: TextSize::Pt11,
-            text: "Today",
-        }),
-        Frame::Text(TextBlock::plain(Cut::Roman, TextSize::Pt11, "A paragraph.")),
-        Frame::List(List {
-            size: TextSize::Pt11,
-            cut: Cut::Roman,
-            items: vec![vec![Span {
-                cut: Cut::Roman,
-                text: "First.",
-            }]],
-        }),
-        Frame::Pair(common::pair(Cut::Roman, "Espresso", "$4.50")),
-    ]);
-    for frame in &sheet.frames {
-        cover(frame);
-    }
-    let g = compose(&sheet, &faces).unwrap();
-    assert_eq!(g.width_dots, PRINTABLE_DOTS);
-    assert!(g.pixels.iter().any(|&b| b != 0));
-    encode(&lower(&sheet, &faces).unwrap()).unwrap();
-}
-
-#[test]
-fn table_lookup_is_by_cut() {
-    let faces = common::table();
-    assert!(faces.text(Cut::Roman).is_ok());
-    assert!(faces.text(Cut::Bold).is_ok());
-    assert!(faces.display(Cut::Roman).is_ok());
 }

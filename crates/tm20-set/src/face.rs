@@ -239,3 +239,16 @@ fn ot_features(kind: ShapeKind) -> Vec<Feature> {
     }
     f
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn garbage_bytes_are_font_error() {
+        assert!(matches!(
+            Face::from_bytes(vec![0, 1, 2, 3]),
+            Err(Error::Font)
+        ));
+    }
+}
