@@ -1,50 +1,73 @@
-//! Parsed OpenType. Optical role is a second parse into [`TextFace`] or [`DisplayFace`].
+//! Parsed OpenType. Optical role is a second parse into [`TextFace`] or
+//! [`DisplayFace`]. Which [`Cut`] a face fills is decided outside this crate.
 
-use std::path::Path;
-
-use font_kit::family_name::FamilyName;
-use font_kit::handle::Handle;
-use font_kit::properties::{Properties, Style as KitStyle, Weight as KitWeight};
-use font_kit::source::SystemSource;
 use fontdue::{Font as RasterFont, FontSettings};
 use harfrust::{Feature, FontRef, ShapeOptions, ShaperData, Tag, UnicodeBuffer};
 
 use crate::error::Error;
 use crate::size::{DisplaySize, TextSize};
 
-/// Named cut. Not a CSS `font-weight` number on a run.
+/// Named voice. The sheet writes these; [`FaceTable`] says what they are.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Weight {
+#[repr(u8)]
+pub enum Cut {
     Light,
     Roman,
+    Italic,
     Medium,
     Bold,
 }
 
-impl Weight {
-    fn kit(self) -> KitWeight {
-        match self {
-            Weight::Light => KitWeight(300.0),
-            Weight::Roman => KitWeight(400.0),
-            Weight::Medium => KitWeight(500.0),
-            Weight::Bold => KitWeight(700.0),
-        }
+impl Cut {
+    const COUNT: usize = 5;
+
+    fn index(self) -> usize {
+        self as usize
     }
 }
 
-/// Real italic from a second file. Fake oblique is unrepresentable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Slope {
-    Upright,
-    Italic,
+impl std::fmt::Display for Cut {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Cut::Light => "Light",
+            Cut::Roman => "Roman",
+            Cut::Italic => "Italic",
+            Cut::Medium => "Medium",
+            Cut::Bold => "Bold",
+        })
+    }
 }
 
-impl Slope {
-    fn kit(self) -> KitStyle {
-        match self {
-            Slope::Upright => KitStyle::Normal,
-            Slope::Italic => KitStyle::Italic,
-        }
+/// Loaded cuts. The sheet names [`Cut`]s; this table is what those names mean.
+#[derive(Default)]
+pub struct FaceTable {
+    text: [Option<TextFace>; Cut::COUNT],
+    display: [Option<DisplayFace>; Cut::COUNT],
+}
+
+impl FaceTable {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set_text(&mut self, cut: Cut, face: TextFace) {
+        self.text[cut.index()] = Some(face);
+    }
+
+    pub fn set_display(&mut self, cut: Cut, face: DisplayFace) {
+        self.display[cut.index()] = Some(face);
+    }
+
+    pub fn text(&self, cut: Cut) -> Result<&TextFace, Error> {
+        self.text[cut.index()]
+            .as_ref()
+            .ok_or(Error::MissingText(cut))
+    }
+
+    pub fn display(&self, cut: Cut) -> Result<&DisplayFace, Error> {
+        self.display[cut.index()]
+            .as_ref()
+            .ok_or(Error::MissingDisplay(cut))
     }
 }
 
@@ -54,8 +77,6 @@ pub struct Face {
     index: u32,
     raster: RasterFont,
     hb: ShaperData,
-    weight: Weight,
-    slope: Slope,
 }
 
 /// Text optical role. Accepts only [`TextSize`].
@@ -64,17 +85,18 @@ pub struct TextFace(Face);
 /// Display optical role. Accepts only [`DisplaySize`].
 pub struct DisplayFace(Face);
 
+enum ShapeKind {
+    Run,
+    Figure,
+    Mark,
+}
+
 impl Face {
-    pub fn from_bytes(bytes: Vec<u8>, weight: Weight, slope: Slope) -> Result<Self, Error> {
-        Self::from_bytes_index(bytes, 0, weight, slope)
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, Error> {
+        Self::from_bytes_index(bytes, 0)
     }
 
-    pub fn from_bytes_index(
-        bytes: Vec<u8>,
-        index: u32,
-        weight: Weight,
-        slope: Slope,
-    ) -> Result<Self, Error> {
+    pub fn from_bytes_index(bytes: Vec<u8>, index: u32) -> Result<Self, Error> {
         let font = FontRef::from_index(&bytes, index).map_err(|_| Error::Font)?;
         let raster = RasterFont::from_bytes(bytes.as_slice(), FontSettings::default())
             .map_err(|_| Error::Font)?;
@@ -84,48 +106,7 @@ impl Face {
             index,
             raster,
             hb,
-            weight,
-            slope,
         })
-    }
-
-    pub fn from_path(path: impl AsRef<Path>, weight: Weight, slope: Slope) -> Result<Self, Error> {
-        Self::from_bytes(std::fs::read(path)?, weight, slope)
-    }
-
-    fn from_handle(handle: Handle, weight: Weight, slope: Slope) -> Result<Self, Error> {
-        match handle {
-            Handle::Path { path, font_index } => {
-                Self::from_bytes_index(std::fs::read(path)?, font_index, weight, slope)
-            }
-            Handle::Memory { bytes, font_index } => {
-                Self::from_bytes_index((*bytes).clone(), font_index, weight, slope)
-            }
-        }
-    }
-
-    pub fn system(family: &str, weight: Weight, slope: Slope) -> Result<Self, Error> {
-        Self::from_handle(
-            match_family(&[FamilyName::Title(family.into())], weight, slope, family)?,
-            weight,
-            slope,
-        )
-    }
-
-    pub fn sans(weight: Weight, slope: Slope) -> Result<Self, Error> {
-        Self::from_handle(
-            match_family(&[FamilyName::SansSerif], weight, slope, "sans-serif")?,
-            weight,
-            slope,
-        )
-    }
-
-    pub fn weight(&self) -> Weight {
-        self.weight
-    }
-
-    pub fn slope(&self) -> Slope {
-        self.slope
     }
 
     pub fn text(self) -> TextFace {
@@ -143,14 +124,7 @@ impl Face {
             .ascent
     }
 
-    pub(crate) fn shape(
-        &self,
-        text: &str,
-        px: f32,
-        tabular: bool,
-        tracking: f32,
-        mark: bool,
-    ) -> Shaped {
+    fn shape(&self, text: &str, px: f32, kind: ShapeKind, tracking: f32) -> Shaped {
         if text.is_empty() {
             return Shaped {
                 glyphs: Vec::new(),
@@ -163,7 +137,7 @@ impl Face {
         let mut buf = UnicodeBuffer::new();
         buf.push_str(text);
         buf.guess_segment_properties();
-        let features = ot_features(tabular, mark);
+        let features = ot_features(kind);
         let glyphs = shaper.shape(buf, ShapeOptions::new().features(&features));
         let scale = px / shaper.units_per_em() as f32;
         let mut x = 0.0;
@@ -194,36 +168,20 @@ impl Face {
 }
 
 impl TextFace {
-    pub fn from_bytes(bytes: Vec<u8>, weight: Weight, slope: Slope) -> Result<Self, Error> {
-        Ok(Face::from_bytes(bytes, weight, slope)?.text())
-    }
-
-    pub fn from_path(path: impl AsRef<Path>, weight: Weight, slope: Slope) -> Result<Self, Error> {
-        Ok(Face::from_path(path, weight, slope)?.text())
-    }
-
-    pub fn system(family: &str, weight: Weight, slope: Slope) -> Result<Self, Error> {
-        Ok(Face::system(family, weight, slope)?.text())
-    }
-
-    pub fn sans(weight: Weight, slope: Slope) -> Result<Self, Error> {
-        Ok(Face::sans(weight, slope)?.text())
-    }
-
-    pub fn weight(&self) -> Weight {
-        self.0.weight()
-    }
-
-    pub fn slope(&self) -> Slope {
-        self.0.slope()
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, Error> {
+        Ok(Face::from_bytes(bytes)?.text())
     }
 
     pub(crate) fn px(size: TextSize) -> f32 {
         size.pt() * crate::DPI / 72.0
     }
 
-    pub(crate) fn shape(&self, text: &str, size: TextSize, tabular: bool) -> Shaped {
-        self.0.shape(text, Self::px(size), tabular, 0.0, false)
+    pub(crate) fn shape(&self, text: &str, size: TextSize) -> Shaped {
+        self.0.shape(text, Self::px(size), ShapeKind::Run, 0.0)
+    }
+
+    pub(crate) fn shape_figure(&self, text: &str, size: TextSize) -> Shaped {
+        self.0.shape(text, Self::px(size), ShapeKind::Figure, 0.0)
     }
 
     pub(crate) fn inner(&self) -> &Face {
@@ -232,20 +190,8 @@ impl TextFace {
 }
 
 impl DisplayFace {
-    pub fn from_bytes(bytes: Vec<u8>, weight: Weight, slope: Slope) -> Result<Self, Error> {
-        Ok(Face::from_bytes(bytes, weight, slope)?.display())
-    }
-
-    pub fn from_path(path: impl AsRef<Path>, weight: Weight, slope: Slope) -> Result<Self, Error> {
-        Ok(Face::from_path(path, weight, slope)?.display())
-    }
-
-    pub fn system(family: &str, weight: Weight, slope: Slope) -> Result<Self, Error> {
-        Ok(Face::system(family, weight, slope)?.display())
-    }
-
-    pub fn sans(weight: Weight, slope: Slope) -> Result<Self, Error> {
-        Ok(Face::sans(weight, slope)?.display())
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, Error> {
+        Ok(Face::from_bytes(bytes)?.display())
     }
 
     pub(crate) fn px(size: DisplaySize) -> f32 {
@@ -255,7 +201,7 @@ impl DisplayFace {
     pub(crate) fn shape(&self, text: &str, size: DisplaySize, tracking_em: i16) -> Shaped {
         let px = Self::px(size);
         let tracking = px * tracking_em as f32 / 1000.0;
-        self.0.shape(text, px, false, tracking, true)
+        self.0.shape(text, px, ShapeKind::Mark, tracking)
     }
 
     pub(crate) fn inner(&self) -> &Face {
@@ -275,34 +221,21 @@ pub(crate) struct Shaped {
     pub ascent: f32,
 }
 
-fn ot_features(tabular: bool, mark: bool) -> Vec<Feature> {
+fn ot_features(kind: ShapeKind) -> Vec<Feature> {
     let mut f = vec![
         Feature::new(Tag::new(b"kern"), 1, ..),
         Feature::new(Tag::new(b"liga"), 1, ..),
         Feature::new(Tag::new(b"calt"), 1, ..),
     ];
-    if tabular {
-        f.push(Feature::new(Tag::new(b"tnum"), 1, ..));
-        f.push(Feature::new(Tag::new(b"lnum"), 1, ..));
-    }
-    if mark {
-        f.push(Feature::new(Tag::new(b"case"), 1, ..));
+    match kind {
+        ShapeKind::Run => {}
+        ShapeKind::Figure => {
+            f.push(Feature::new(Tag::new(b"tnum"), 1, ..));
+            f.push(Feature::new(Tag::new(b"lnum"), 1, ..));
+        }
+        ShapeKind::Mark => {
+            f.push(Feature::new(Tag::new(b"case"), 1, ..));
+        }
     }
     f
-}
-
-fn match_family(
-    names: &[FamilyName],
-    weight: Weight,
-    slope: Slope,
-    label: &str,
-) -> Result<Handle, Error> {
-    SystemSource::new()
-        .select_best_match(
-            names,
-            Properties::new().weight(weight.kit()).style(slope.kit()),
-        )
-        .map_err(|_| Error::NotFound {
-            family: label.into(),
-        })
 }

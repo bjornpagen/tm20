@@ -8,10 +8,13 @@ description = "Typesetting language for tm20: a Sheet of Frames lowers to protoc
 
 [[bin]]
 name = "tm20-set"
-path = "src/bin/tm20-set.rs"
+path = "src/bin/tm20-set/main.rs"
 
 [dependencies]
 tm20 = { path = "../tm20" }
 fontdue = "0.9"
 harfrust = "0.13"
+font-kit = "0.14"
+
+[dev-dependencies]
 font-kit = "0.14"

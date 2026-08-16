@@ -1,5 +1,7 @@
 //! Closed sizes. No `f32` point constructor.
 
+use crate::leading::Leading;
+
 /// Thermal resolution of the TM-T20III.
 pub const DPI: f32 = 203.0;
 
@@ -25,6 +27,11 @@ impl TextSize {
     pub fn body_dots(self) -> u16 {
         body_dots(self.pt())
     }
+
+    /// Plus2 slug. Thermal ink spreads; one point of extra lead is not enough.
+    pub fn skip_dots(self) -> u16 {
+        Leading::Plus2.skip_dots(self.body_dots())
+    }
 }
 
 /// Display optical sizes. Unrepresentable on a [`crate::TextFace`].
@@ -47,6 +54,11 @@ impl DisplaySize {
     pub fn body_dots(self) -> u16 {
         body_dots(self.pt())
     }
+
+    /// Solid slug.
+    pub fn skip_dots(self) -> u16 {
+        Leading::Solid.skip_dots(self.body_dots())
+    }
 }
 
 #[cfg(test)]
@@ -56,5 +68,10 @@ mod tests {
     #[test]
     fn eleven_pt_is_31_dots() {
         assert_eq!(TextSize::Pt11.body_dots(), 31);
+    }
+
+    #[test]
+    fn eleven_pt_skip_is_plus2() {
+        assert_eq!(TextSize::Pt11.skip_dots(), 37);
     }
 }

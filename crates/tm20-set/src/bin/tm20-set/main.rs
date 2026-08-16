@@ -1,15 +1,19 @@
+mod kit;
+mod sheets;
+
 use std::env;
-use std::io;
 use std::process::ExitCode;
 
+use sheets::{catalog, find};
 use tm20::encode::encode;
 use tm20::{Transport, Usb};
-use tm20_set::{catalog, find_sheet};
+
+pub(crate) type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 fn usage() {
     let ids: Vec<_> = catalog().iter().map(|c| c.id).collect();
     eprintln!(
-        "tm20-set [--serial S] [--dry] print [{}|all]\n  sheets: {}",
+        "tm20-set [--serial S] [--dry] print [{}|all]\n  sheets: {}\n  nhg reads Neue Haas Grotesk from ~/Library/Fonts",
         ids.join("|"),
         ids.join(", ")
     );
@@ -31,7 +35,7 @@ struct Opts {
     args: Vec<String>,
 }
 
-fn parse_opts() -> io::Result<Opts> {
+fn parse_opts() -> Result<Opts> {
     let mut serial = None;
     let mut dry = false;
     let mut args = Vec::new();
@@ -39,9 +43,7 @@ fn parse_opts() -> io::Result<Opts> {
     while let Some(a) = raw.next() {
         match a.as_str() {
             "--serial" => {
-                serial = Some(raw.next().ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::InvalidInput, "--serial needs a value")
-                })?);
+                serial = Some(raw.next().ok_or("--serial needs a value")?);
             }
             "--dry" => dry = true,
             _ => {
@@ -54,7 +56,7 @@ fn parse_opts() -> io::Result<Opts> {
     Ok(Opts { serial, dry, args })
 }
 
-fn run() -> tm20_set::Result<()> {
+fn run() -> Result<()> {
     let opts = parse_opts()?;
     let mut cmd = opts.args.into_iter();
     match cmd.next().as_deref() {
@@ -64,12 +66,12 @@ fn run() -> tm20_set::Result<()> {
             for case in catalog() {
                 eprintln!("  {:<8} {}", case.id, case.title);
             }
-            Err(io::Error::new(io::ErrorKind::InvalidInput, "unknown command").into())
+            Err("unknown command".into())
         }
     }
 }
 
-fn print_cmd(id: Option<String>, serial: &Option<String>, dry: bool) -> tm20_set::Result<()> {
+fn print_cmd(id: Option<String>, serial: &Option<String>, dry: bool) -> Result<()> {
     match id.as_deref() {
         None | Some("all") => {
             let ids: Vec<_> = if id.as_deref() == Some("all") {
@@ -83,7 +85,7 @@ fn print_cmd(id: Option<String>, serial: &Option<String>, dry: bool) -> tm20_set
             };
             if dry {
                 for id in ids {
-                    let case = find_sheet(id).unwrap();
+                    let case = find(id).unwrap();
                     let n = encode(&case.doc()?)?.len();
                     eprintln!("{}: {} ({n} bytes)", case.id, case.title);
                 }
@@ -91,16 +93,14 @@ fn print_cmd(id: Option<String>, serial: &Option<String>, dry: bool) -> tm20_set
             }
             let mut usb = Usb::open(serial.as_deref())?;
             for id in ids {
-                let case = find_sheet(id).unwrap();
+                let case = find(id).unwrap();
                 eprintln!("{}: {}", case.id, case.title);
                 usb.write(&encode(&case.doc()?)?)?;
             }
             Ok(())
         }
         Some(id) => {
-            let case = find_sheet(id).ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidInput, format!("unknown sheet {id}"))
-            })?;
+            let case = find(id).ok_or_else(|| format!("unknown sheet {id}"))?;
             eprintln!("{}: {}", case.id, case.title);
             let bytes = encode(&case.doc()?)?;
             if dry {

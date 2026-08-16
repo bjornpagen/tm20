@@ -1,5 +1,7 @@
-//! Typesetting language for [`tm20`]. A [`Sheet`] of [`Frame`]s lowers to
-//! protocol [`tm20::Graphics`]. OpenType never enters the protocol crate.
+//! Typesetting language for [`tm20`]. A [`Sheet`] of [`Frame`]s plus a
+//! [`FaceTable`] lowers to protocol [`tm20::Graphics`]. OpenType never enters
+//! the protocol crate. Faces are bytes; which files they came from is not
+//! this crate’s decision.
 
 mod compose;
 mod error;
@@ -8,19 +10,16 @@ mod frame;
 mod leading;
 mod lower;
 mod size;
-mod specimens;
 
 pub use compose::compose;
 pub use error::Error;
-pub use face::{DisplayFace, Face, Slope, TextFace, Weight};
+pub use face::{Cut, DisplayFace, Face, FaceTable, TextFace};
 pub use frame::{
-    Cell, Columns, Frame, Head, List, Mark, MarkAlign, Measure, Row, Rule, Sheet, Span, Table,
-    TextBlock, Thickness, Tracking, EN_DASH,
+    Frame, Head, List, Mark, MarkAlign, Measure, Pair, Rule, Sheet, Span, TextBlock, Thickness,
+    Tracking, EN_DASH,
 };
 pub use leading::{GridSkip, Leading, GRID, HANG};
 pub use lower::lower;
 pub use size::{DisplaySize, TextSize, DPI};
 
 pub type Result<T> = std::result::Result<T, Error>;
-
-pub use specimens::{catalog, find as find_sheet, Case as SheetCase};

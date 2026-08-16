@@ -8,7 +8,8 @@ Two crates, one way of depending. There is no printer builder and no CUPS.
   The printer never sees a font.
 - **`tm20-set`** — typesetter. A `Sheet` of `Frame`s (flush left, Vignelli
   sizes, leading on an 8-dot grid) compiles to one `tm20::Graphics`. OpenType
-  lives here. Receipts with Grotesk are a `Sheet` or they do not exist.
+  lives here as bytes. Which face those bytes came from is the program that
+  prints, not the library.
 
 `tm20-set` depends on `tm20`. Never the reverse.
 
@@ -33,7 +34,7 @@ is hardcoded to the T20III product id until someone adds another.
 cargo run -p tm20 -- hello
 cargo run -p tm20 -- test all          # skip --wait if bulk IN is dirty
 cargo run -p tm20-set -- print ticket
-cargo run -p tm20-set -- print nhg
+cargo run -p tm20-set -- print nhg     # needs Neue Haas Grotesk in ~/Library/Fonts
 ```
 
 `publish = false`. License is 0BSD.

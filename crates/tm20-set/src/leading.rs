@@ -1,7 +1,5 @@
 //! Baseline skip in points; column gutters in 8-dot modules. Two coordinates.
 
-use crate::size::{DisplaySize, TextSize};
-
 /// White-space module in dots. Divides Font A’s 24-dot cell. Not leading.
 pub const GRID: u16 = 8;
 
@@ -42,14 +40,6 @@ pub enum Leading {
 }
 
 impl Leading {
-    pub fn for_text(_size: TextSize) -> Self {
-        Leading::Plus2
-    }
-
-    pub fn for_display(_size: DisplaySize) -> Self {
-        Leading::Solid
-    }
-
     pub fn skip_dots(self, body_dots: u16) -> u16 {
         match self {
             Leading::Solid => body_dots,
@@ -62,6 +52,7 @@ impl Leading {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::size::TextSize;
 
     #[test]
     fn skip_modules_on_grid() {
@@ -82,6 +73,5 @@ mod tests {
         let body = TextSize::Pt11.body_dots();
         assert_eq!(body, 31);
         assert_eq!(Leading::Plus2.skip_dots(body), 37);
-        assert_eq!(Leading::for_text(TextSize::Pt11), Leading::Plus2);
     }
 }
