@@ -72,42 +72,33 @@ struct Cx<L> {
 }
 
 #[derive(Clone, Copy)]
-struct Voice {
-    italic: bool,
-    bold: bool,
-}
-
-impl Voice {
-    const ROMAN: Self = Self {
-        italic: false,
-        bold: false,
-    };
-    const BOLD: Self = Self {
-        italic: false,
-        bold: true,
-    };
+enum Voice {
+    Roman,
+    Italic,
+    Bold,
+    BoldItalic,
 }
 
 fn cut(v: Voice) -> Cut {
-    match (v.bold, v.italic) {
-        (false, false) => Cut::Roman,
-        (false, true) => Cut::Italic,
-        (true, false) => Cut::Bold,
-        (true, true) => Cut::BoldItalic,
+    match v {
+        Voice::Roman => Cut::Roman,
+        Voice::Italic => Cut::Italic,
+        Voice::Bold => Cut::Bold,
+        Voice::BoldItalic => Cut::BoldItalic,
     }
 }
 
 fn emph(v: Voice) -> Voice {
-    Voice {
-        italic: true,
-        bold: v.bold,
+    match v {
+        Voice::Roman | Voice::Italic => Voice::Italic,
+        Voice::Bold | Voice::BoldItalic => Voice::BoldItalic,
     }
 }
 
 fn strong(v: Voice) -> Voice {
-    Voice {
-        italic: v.italic,
-        bold: true,
+    match v {
+        Voice::Roman | Voice::Bold => Voice::Bold,
+        Voice::Italic | Voice::BoldItalic => Voice::BoldItalic,
     }
 }
 
@@ -135,18 +126,44 @@ where
     }
 
     fn block<'a>(&mut self, node: &'a AstNode<'a>) -> Result<Option<Frame<'static>>, Error> {
-        let value = node.data.borrow().value.clone();
-        match value {
-            NodeValue::FrontMatter(_) => Ok(None),
-            NodeValue::FootnoteDefinition(def) => {
+        enum Job {
+            Skip,
+            Footnote(String),
+            Quote,
+            List(comrak::nodes::NodeList),
+            Code(String),
+            Html,
+            Heading(u8),
+            Rule,
+            Table(Vec<TableAlignment>),
+        }
+        let job = match &node.data.borrow().value {
+            NodeValue::FrontMatter(_)
+            | NodeValue::Item(_)
+            | NodeValue::TaskItem(_)
+            | NodeValue::TableRow(_)
+            | NodeValue::TableCell => Job::Skip,
+            NodeValue::FootnoteDefinition(def) => Job::Footnote(def.name.clone()),
+            NodeValue::BlockQuote => Job::Quote,
+            NodeValue::List(nl) => Job::List(*nl),
+            NodeValue::CodeBlock(cb) => Job::Code(cb.literal.clone()),
+            NodeValue::HtmlBlock(_) | NodeValue::HtmlInline(_) => Job::Html,
+            NodeValue::Heading(h) => Job::Heading(h.level),
+            NodeValue::ThematicBreak => Job::Rule,
+            NodeValue::Table(t) => Job::Table(t.alignments.clone()),
+            _ => Job::Html,
+        };
+        match job {
+            Job::Skip => Ok(None),
+            Job::Footnote(name) => {
                 let was = self.in_note;
                 self.in_note = true;
                 let frames = self.blocks(node)?;
                 self.in_note = was;
-                self.foot_defs.entry(def.name).or_insert(frames);
+                self.foot_defs.entry(name).or_insert(frames);
                 Ok(None)
             }
-            NodeValue::BlockQuote => {
+            Job::Quote => {
                 if self.quote_depth >= NEST_CAP {
                     return Err(Error::Nesting);
                 }
@@ -155,18 +172,14 @@ where
                 self.quote_depth -= 1;
                 Ok(Some(Frame::Quote(Quote { frames })))
             }
-            NodeValue::List(nl) => Ok(Some(self.list(node, nl)?)),
-            NodeValue::Item(_) | NodeValue::TaskItem(_) => Ok(None),
-            NodeValue::CodeBlock(cb) => Ok(Some(code_frame(&cb.literal, self.text_size()))),
-            NodeValue::HtmlBlock(_) => Err(Error::Html),
-            NodeValue::Heading(h) => Ok(Some(self.heading(node, h.level)?)),
-            NodeValue::ThematicBreak => Ok(Some(Frame::Rule(Rule {
+            Job::List(nl) => Ok(Some(self.list(node, nl)?)),
+            Job::Code(literal) => Ok(Some(code_frame(&literal, self.text_size()))),
+            Job::Html => Err(Error::Html),
+            Job::Heading(level) => Ok(Some(self.heading(node, level)?)),
+            Job::Rule => Ok(Some(Frame::Rule(Rule {
                 thickness: Thickness::Two,
             }))),
-            NodeValue::Table(t) => Ok(Some(self.table(node, t.alignments.as_slice())?)),
-            NodeValue::TableRow(_) | NodeValue::TableCell => Ok(None),
-            NodeValue::HtmlInline(_) => Err(Error::Html),
-            _ => Err(Error::Html),
+            Job::Table(alignments) => Ok(Some(self.table(node, &alignments)?)),
         }
     }
 
@@ -218,8 +231,7 @@ where
         };
         let mut items = Vec::new();
         for child in node.children() {
-            let value = child.data.borrow().value.clone();
-            let mark = match value {
+            let mark = match &child.data.borrow().value {
                 NodeValue::TaskItem(t) => ItemMark::Task {
                     checked: t.symbol.is_some(),
                 },
@@ -264,19 +276,16 @@ where
         let mut spans = Vec::new();
         for child in kids {
             let display = match &child.data.borrow().value {
-                NodeValue::Math(m) => m.display_math,
-                _ => false,
+                NodeValue::Math(m) if m.display_math => Some(m.literal.clone()),
+                _ => None,
             };
-            if display {
+            if let Some(lit) = display {
                 flush_text(self.text_size(), &mut spans, &mut frames);
-                let NodeValue::Math(m) = child.data.borrow().value.clone() else {
-                    unreachable!("display math");
-                };
-                let m = math::display(&m.literal, self.text_size(), self.measure)?;
+                let m = math::display(&lit, self.text_size(), self.measure)?;
                 frames.push(Frame::Math(m));
                 continue;
             }
-            self.inline(child, Voice::ROMAN, &mut spans)?;
+            self.inline(child, Voice::Roman, &mut spans)?;
         }
         flush_text(self.text_size(), &mut spans, &mut frames);
         Ok(frames)
@@ -301,7 +310,7 @@ where
         let mut rows = Vec::new();
         for row in node.children() {
             let header = matches!(row.data.borrow().value, NodeValue::TableRow(true));
-            let voice = if header { Voice::BOLD } else { Voice::ROMAN };
+            let voice = if header { Voice::Bold } else { Voice::Roman };
             let mut cells = Vec::new();
             for cell in row.children() {
                 let mut spans = self.inlines(cell, voice)?;
@@ -343,23 +352,66 @@ where
         voice: Voice,
         spans: &mut Vec<Span<'static>>,
     ) -> Result<(), Error> {
-        let value = node.data.borrow().value.clone();
-        match value {
-            NodeValue::Text(t) => push(spans, cut(voice), t.as_ref(), None),
-            NodeValue::SoftBreak => push(spans, cut(voice), " ", None),
-            NodeValue::LineBreak => push(spans, cut(voice), "\n", None),
-            NodeValue::Code(c) => push(spans, Cut::Mono, strip_code(&c.literal), None),
-            NodeValue::Emph => {
+        enum Job {
+            Emph,
+            Strong,
+            Escaped,
+            Link { url: String, title: String },
+            Foot(String),
+            Math(String),
+            Image,
+            Html,
+        }
+        let job = {
+            let data = node.data.borrow();
+            match &data.value {
+                NodeValue::Text(t) => {
+                    push(spans, cut(voice), t.as_ref(), None);
+                    return Ok(());
+                }
+                NodeValue::SoftBreak => {
+                    push(spans, cut(voice), " ", None);
+                    return Ok(());
+                }
+                NodeValue::LineBreak => {
+                    push(spans, cut(voice), "\n", None);
+                    return Ok(());
+                }
+                NodeValue::Code(c) => {
+                    push(spans, Cut::Mono, strip_code(&c.literal), None);
+                    return Ok(());
+                }
+                NodeValue::Emph => Job::Emph,
+                NodeValue::Strong => Job::Strong,
+                NodeValue::Escaped => Job::Escaped,
+                NodeValue::Link(link) => Job::Link {
+                    url: link.url.clone(),
+                    title: link.title.clone(),
+                },
+                NodeValue::FootnoteReference(fr) => Job::Foot(fr.name.clone()),
+                NodeValue::Math(m) => Job::Math(m.literal.clone()),
+                NodeValue::Image(_) => Job::Image,
+                NodeValue::HtmlInline(_) => Job::Html,
+                _ => Job::Html,
+            }
+        };
+        match job {
+            Job::Emph => {
                 for child in node.children() {
                     self.inline(child, emph(voice), spans)?;
                 }
             }
-            NodeValue::Strong => {
+            Job::Strong => {
                 for child in node.children() {
                     self.inline(child, strong(voice), spans)?;
                 }
             }
-            NodeValue::Link(link) => {
+            Job::Escaped => {
+                for child in node.children() {
+                    self.inline(child, voice, spans)?;
+                }
+            }
+            Job::Link { url, title } => {
                 let inner = emph(voice);
                 let mut inner_spans = Vec::new();
                 for child in node.children() {
@@ -372,11 +424,11 @@ where
                         Span::Math(_) => "",
                     })
                     .collect();
-                let dest_note = self.note_for_dest(&link.url, &text, &link.title);
+                let dest_note = self.note_for_dest(&url, &text, &title);
                 if inner_spans.is_empty() {
                     inner_spans.push(Span::Type {
                         cut: cut(inner),
-                        text: std::borrow::Cow::Owned(String::new()),
+                        text: std::borrow::Cow::Borrowed(""),
                         note: dest_note,
                     });
                 } else if let Some(n) = dest_note
@@ -386,29 +438,23 @@ where
                 }
                 spans.extend(inner_spans);
             }
-            NodeValue::FootnoteReference(fr) => {
-                let n = self.note_for_foot(&fr.name);
+            Job::Foot(name) => {
+                let n = self.note_for_foot(&name);
                 match spans.last_mut() {
                     Some(Span::Type { note, .. }) if note.is_none() => *note = Some(n),
                     _ => spans.push(Span::Type {
                         cut: cut(voice),
-                        text: std::borrow::Cow::Owned(String::new()),
+                        text: std::borrow::Cow::Borrowed(""),
                         note: Some(n),
                     }),
                 }
             }
-            NodeValue::Image(_) => return Err(Error::MixedImage),
-            NodeValue::Math(m) => {
-                let math = math::inline(&m.literal, self.text_size(), self.measure)?;
+            Job::Math(lit) => {
+                let math = math::inline(&lit, self.text_size(), self.measure)?;
                 spans.push(Span::math(math));
             }
-            NodeValue::HtmlInline(_) => return Err(Error::Html),
-            NodeValue::Escaped => {
-                for child in node.children() {
-                    self.inline(child, voice, spans)?;
-                }
-            }
-            _ => return Err(Error::Html),
+            Job::Image => return Err(Error::MixedImage),
+            Job::Html => return Err(Error::Html),
         }
         Ok(())
     }

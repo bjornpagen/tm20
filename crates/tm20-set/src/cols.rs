@@ -363,36 +363,40 @@ where
             return Ok(());
         }
         let later_min = flex_min_from(self.spec, i + 1);
-        for w in grid_ticks(min, pref) {
-            if w.saturating_add(later_min) > remaining {
-                continue;
+        each_grid_tick(min, pref, |w| {
+            if w.saturating_add(later_min) <= remaining {
+                self.widths[i] = w;
+                self.search(i + 1, remaining - w)?;
             }
-            self.widths[i] = w;
-            self.search(i + 1, remaining - w)?;
-        }
+            Ok(())
+        })?;
         Ok(())
     }
 }
 
-fn grid_ticks(lo: u16, hi: u16) -> Vec<u16> {
+fn each_grid_tick(
+    lo: u16,
+    hi: u16,
+    mut visit: impl FnMut(u16) -> Result<(), Error>,
+) -> Result<(), Error> {
+    visit(lo)?;
     if lo >= hi {
-        return vec![lo];
+        return Ok(());
     }
-    let mut out = vec![lo];
     let mut x = (lo / GRID + 1) * GRID;
     if x <= lo {
         x = x.saturating_add(GRID);
     }
     while x < hi {
-        out.push(x);
+        visit(x)?;
         let next = x.saturating_add(GRID);
         if next <= x {
             break;
         }
         x = next;
     }
-    out.push(hi);
-    out
+    visit(hi)?;
+    Ok(())
 }
 
 #[cfg(test)]

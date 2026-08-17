@@ -87,7 +87,7 @@ fn head_stays_with_following_ink_when_that_keeps_min_count() {
             size: TextSize::Pt11,
             text: "Head".into(),
         }),
-        Frame::Figure(Figure::from_bits(PRINTABLE_DOTS, fig_h as u16, bits).unwrap()),
+        Frame::Figure(Figure::from_bits(PRINTABLE_DOTS, fig_h as u16, &bits).unwrap()),
     ]);
     let head_only = compose(
         &Sheet::tape(vec![Frame::Head(Head {

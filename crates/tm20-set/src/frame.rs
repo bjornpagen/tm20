@@ -286,24 +286,26 @@ pub struct Code<'a> {
     pub lines: Vec<Cow<'a, str>>,
 }
 
-fn bitmap(width: u16, height: u16, bits: Vec<bool>) -> Result<(u16, u16, Vec<bool>), Error> {
+fn bitmap(width: u16, height: u16, bits: &[bool]) -> Result<(u16, u16, Vec<u8>), Error> {
     if width == 0 || height == 0 || bits.len() != width as usize * height as usize {
         return Err(Error::Image);
     }
-    Ok((width, height, bits))
+    let pixels = tm20::graphics::pack(width, height, bits).map_err(|_| Error::Image)?;
+    Ok((width, height, pixels))
 }
 
-/// Photograph. Native size; shrinks if wider than the measure; centered if narrower. `true` is black.
+/// Photograph. Native size; shrinks if wider than the measure; centered if narrower.
+/// `bits` is the protocol table: packed MSB-first, 1 is black.
 #[derive(Clone)]
 pub struct Figure {
     pub width: u16,
     pub height: u16,
-    pub bits: Vec<bool>,
+    pub bits: Vec<u8>,
     pub note: Option<NonZeroU32>,
 }
 
 impl Figure {
-    pub fn from_bits(width: u16, height: u16, bits: Vec<bool>) -> Result<Self, Error> {
+    pub fn from_bits(width: u16, height: u16, bits: &[bool]) -> Result<Self, Error> {
         let (width, height, bits) = bitmap(width, height, bits)?;
         Ok(Self {
             width,
@@ -318,8 +320,12 @@ impl Figure {
     pub fn from_image(bytes: &[u8], measure: u16) -> Result<Self, Error> {
         let luma = decode_luma(bytes)?;
         let (w, h, samples) = fit_luma(&luma, measure)?;
-        let bits = floyd_steinberg(w, h, samples);
-        Self::from_bits(w as u16, h as u16, bits)
+        Ok(Self {
+            width: w as u16,
+            height: h as u16,
+            bits: floyd_steinberg(w, h, samples),
+            note: None,
+        })
     }
 
     #[must_use]
@@ -331,16 +337,17 @@ impl Figure {
 
 /// TeX box. Natural size; shrinks if wider than the measure; never scales up.
 /// `ascent` is dots from the top of the bits to the baseline.
+/// `bits` is the protocol table: packed MSB-first, 1 is black.
 #[derive(Clone)]
 pub struct Math {
     pub width: u16,
     pub height: u16,
-    pub bits: Vec<bool>,
+    pub bits: Vec<u8>,
     pub ascent: u16,
 }
 
 impl Math {
-    pub fn from_bits(width: u16, height: u16, bits: Vec<bool>, ascent: u16) -> Result<Self, Error> {
+    pub fn from_bits(width: u16, height: u16, bits: &[bool], ascent: u16) -> Result<Self, Error> {
         let (width, height, bits) = bitmap(width, height, bits)?;
         Ok(Self {
             width,
@@ -357,8 +364,12 @@ impl Math {
         let (dst_w, dst_h, samples) = fit_luma(&luma, max_w)?;
         let scale = dst_w as f32 / src_w as f32;
         let ascent = ((ascent as f32 * scale).round() as u16).min(dst_h as u16);
-        let bits = floyd_steinberg(dst_w, dst_h, samples);
-        Self::from_bits(dst_w as u16, dst_h as u16, bits, ascent)
+        Ok(Self {
+            width: dst_w as u16,
+            height: dst_h as u16,
+            bits: floyd_steinberg(dst_w, dst_h, samples),
+            ascent,
+        })
     }
 }
 
@@ -391,15 +402,18 @@ fn fit_luma(luma: &image::GrayImage, max_w: u16) -> Result<(u32, u32, Vec<f32>),
     }
 }
 
-fn floyd_steinberg(w: u32, h: u32, mut px: Vec<f32>) -> Vec<bool> {
-    let mut bits = vec![false; (w * h) as usize];
+fn floyd_steinberg(w: u32, h: u32, mut px: Vec<f32>) -> Vec<u8> {
+    let stride = tm20::graphics::width_bytes(w as u16);
+    let mut bits = vec![0u8; stride * h as usize];
     let idx = |x: u32, y: u32| (y * w + x) as usize;
     for y in 0..h {
         for x in 0..w {
             let i = idx(x, y);
             let old = px[i].clamp(0.0, 255.0);
             let new = if old < 128.0 { 0.0 } else { 255.0 };
-            bits[i] = new == 0.0;
+            if new == 0.0 {
+                tm20::graphics::set_black(&mut bits, stride, x as usize, y as usize);
+            }
             let err = old - new;
             if x + 1 < w {
                 px[idx(x + 1, y)] += err * 7.0 / 16.0;
@@ -482,11 +496,11 @@ mod tests {
     #[test]
     fn figure_rejects_ragged_bits() {
         assert!(matches!(
-            Figure::from_bits(2, 2, vec![true]),
+            Figure::from_bits(2, 2, &[true]),
             Err(Error::Image)
         ));
         assert!(matches!(
-            Figure::from_bits(0, 1, vec![true]),
+            Figure::from_bits(0, 1, &[true]),
             Err(Error::Image)
         ));
     }
@@ -504,7 +518,7 @@ mod tests {
         let fig = Figure::from_image(&gray_png(8, 4), 16).unwrap();
         assert_eq!(fig.width, 8);
         assert_eq!(fig.height, 4);
-        assert!(fig.bits.iter().any(|&b| b));
+        assert!(fig.bits.iter().any(|&b| b != 0));
     }
 
     #[test]

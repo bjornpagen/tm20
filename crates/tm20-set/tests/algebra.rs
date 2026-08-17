@@ -1251,7 +1251,7 @@ fn figure_blits_into_the_canvas() {
     let faces = common::table();
     let bits = vec![true; 8 * 8];
     let g = compose(
-        &Sheet::tape(vec![Frame::Figure(Figure::from_bits(8, 8, bits).unwrap())]),
+        &Sheet::tape(vec![Frame::Figure(Figure::from_bits(8, 8, &bits).unwrap())]),
         &faces,
     )
     .unwrap();
@@ -1271,7 +1271,7 @@ fn figure_narrower_than_the_measure_is_centered() {
     let faces = common::table();
     let bits = vec![true; 8 * 8];
     let g = compose(
-        &Sheet::tape(vec![Frame::Figure(Figure::from_bits(8, 8, bits).unwrap())]),
+        &Sheet::tape(vec![Frame::Figure(Figure::from_bits(8, 8, &bits).unwrap())]),
         &faces,
     )
     .unwrap();
@@ -1286,7 +1286,7 @@ fn figure_as_wide_as_the_measure_is_a_full_slice() {
     let w = PRINTABLE_DOTS;
     let bits = vec![true; w as usize];
     let g = compose(
-        &Sheet::tape(vec![Frame::Figure(Figure::from_bits(w, 1, bits).unwrap())]),
+        &Sheet::tape(vec![Frame::Figure(Figure::from_bits(w, 1, &bits).unwrap())]),
         &faces,
     )
     .unwrap();
@@ -1405,7 +1405,7 @@ fn dest_title_is_two_lines() {
 fn figure_note_has_raised_ink() {
     let faces = common::table();
     let bits = vec![true; 8 * 8];
-    let fig = Figure::from_bits(8, 8, bits)
+    let fig = Figure::from_bits(8, 8, &bits)
         .unwrap()
         .noted(std::num::NonZeroU32::new(1).unwrap());
     let mut sheet = Sheet::tape(vec![Frame::Figure(fig)]);

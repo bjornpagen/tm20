@@ -33,6 +33,18 @@ pub fn width_bytes(width_dots: u16) -> usize {
     (width_dots as usize).div_ceil(8)
 }
 
+/// Set a black dot. Same bit order as [`Graphics::pixels`]: row-major, MSB first.
+#[inline]
+pub fn set_black(pixels: &mut [u8], stride: usize, x: usize, y: usize) {
+    pixels[y * stride + x / 8] |= 0x80 >> (x % 8);
+}
+
+/// True if that dot is black in packed MSB-first bytes.
+#[inline]
+pub fn is_black(pixels: &[u8], stride: usize, x: usize, y: usize) -> bool {
+    pixels[y * stride + x / 8] & (0x80 >> (x % 8)) != 0
+}
+
 /// Largest `height_dots` whose fn=112 body fits in a 16-bit length.
 /// At 576 dots wide this is 910 (`10 + 72*h ≤ 65535`).
 pub fn max_height(width_dots: u16) -> u16 {
@@ -54,7 +66,7 @@ pub fn pack(width_dots: u16, height_dots: u16, pixels: &[bool]) -> Result<Vec<u8
     for y in 0..height_dots as usize {
         for x in 0..width_dots as usize {
             if pixels[y * width_dots as usize + x] {
-                out[y * stride + x / 8] |= 0x80 >> (x % 8);
+                set_black(&mut out, stride, x, y);
             }
         }
     }
@@ -131,6 +143,17 @@ mod tests {
         bits[0] = true;
         bits[7] = true;
         assert_eq!(pack(8, 1, &bits).unwrap(), vec![0b1000_0001]);
+    }
+
+    #[test]
+    fn set_black_is_the_pack_table() {
+        let mut pixels = vec![0u8; 2];
+        set_black(&mut pixels, 1, 0, 0);
+        set_black(&mut pixels, 1, 7, 1);
+        assert!(is_black(&pixels, 1, 0, 0));
+        assert!(is_black(&pixels, 1, 7, 1));
+        assert!(!is_black(&pixels, 1, 1, 0));
+        assert_eq!(pixels, vec![0b1000_0000, 0b0000_0001]);
     }
 
     #[test]

@@ -1,6 +1,8 @@
 //! Parsed OpenType. Optical role is a second parse into [`TextFace`] or
 //! [`DisplayFace`]. Which [`Cut`] a face fills is decided outside this crate.
 
+use std::cell::RefCell;
+
 use fontdue::{Font as RasterFont, FontSettings};
 use harfrust::{Feature, FontRef, ShapeOptions, ShaperData, Tag, UnicodeBuffer};
 
@@ -81,6 +83,7 @@ pub struct Face {
     index: u32,
     raster: RasterFont,
     hb: ShaperData,
+    buf: RefCell<Option<UnicodeBuffer>>,
 }
 
 /// Text optical role. Accepts only [`TextSize`].
@@ -89,6 +92,7 @@ pub struct TextFace(Face);
 /// Display optical role. Accepts only [`DisplaySize`].
 pub struct DisplayFace(Face);
 
+#[derive(Clone, Copy)]
 enum ShapeKind {
     Run,
     Figure,
@@ -110,6 +114,7 @@ impl Face {
             index,
             raster,
             hb,
+            buf: RefCell::new(Some(UnicodeBuffer::new())),
         })
     }
 
@@ -128,7 +133,7 @@ impl Face {
             .ascent
     }
 
-    fn shape(&self, text: &str, px: f32, kind: &ShapeKind, tracking: f32) -> Shaped {
+    fn shape(&self, text: &str, px: f32, kind: ShapeKind, tracking: f32) -> Shaped {
         if text.is_empty() {
             return Shaped {
                 glyphs: Vec::new(),
@@ -138,27 +143,59 @@ impl Face {
         }
         let font = FontRef::from_index(&self.bytes, self.index).expect("Face bytes already parsed");
         let shaper = self.hb.shaper(&font).build();
-        let mut buf = UnicodeBuffer::new();
+        let mut buf = self.buf.borrow_mut().take().unwrap_or_default();
+        buf.clear();
         buf.push_str(text);
         buf.guess_segment_properties();
-        let features = ot_features(kind);
-        let glyphs = shaper.shape(buf, ShapeOptions::new().features(&features));
-        let scale = px / shaper.units_per_em() as f32;
-        let mut x = 0.0;
-        let mut placed = Vec::with_capacity(glyphs.len());
-        let infos = glyphs.glyph_infos();
-        let positions = glyphs.glyph_positions();
-        for (i, (info, pos)) in infos.iter().zip(positions).enumerate() {
-            placed.push(Placed {
-                glyph_id: info.glyph_id as u16,
-                x: x + pos.x_offset as f32 * scale,
-                y: pos.y_offset as f32 * scale,
-            });
-            x += pos.x_advance as f32 * scale;
-            if tracking != 0.0 && i + 1 < infos.len() {
-                x += tracking;
+        let glyph_buf = match kind {
+            ShapeKind::Run => {
+                let features = [
+                    Feature::new(Tag::new(b"kern"), 1, ..),
+                    Feature::new(Tag::new(b"liga"), 1, ..),
+                    Feature::new(Tag::new(b"calt"), 1, ..),
+                ];
+                shaper.shape(buf, ShapeOptions::new().features(&features))
             }
-        }
+            ShapeKind::Figure => {
+                let features = [
+                    Feature::new(Tag::new(b"kern"), 1, ..),
+                    Feature::new(Tag::new(b"liga"), 1, ..),
+                    Feature::new(Tag::new(b"calt"), 1, ..),
+                    Feature::new(Tag::new(b"tnum"), 1, ..),
+                    Feature::new(Tag::new(b"lnum"), 1, ..),
+                ];
+                shaper.shape(buf, ShapeOptions::new().features(&features))
+            }
+            ShapeKind::Mark => {
+                let features = [
+                    Feature::new(Tag::new(b"kern"), 1, ..),
+                    Feature::new(Tag::new(b"liga"), 1, ..),
+                    Feature::new(Tag::new(b"calt"), 1, ..),
+                    Feature::new(Tag::new(b"case"), 1, ..),
+                ];
+                shaper.shape(buf, ShapeOptions::new().features(&features))
+            }
+        };
+        let scale = px / shaper.units_per_em() as f32;
+        let (placed, x) = {
+            let infos = glyph_buf.glyph_infos();
+            let positions = glyph_buf.glyph_positions();
+            let mut x = 0.0;
+            let mut placed = Vec::with_capacity(infos.len());
+            for (i, (info, pos)) in infos.iter().zip(positions).enumerate() {
+                placed.push(Placed {
+                    glyph_id: info.glyph_id as u16,
+                    x: x + pos.x_offset as f32 * scale,
+                    y: pos.y_offset as f32 * scale,
+                });
+                x += pos.x_advance as f32 * scale;
+                if tracking != 0.0 && i + 1 < infos.len() {
+                    x += tracking;
+                }
+            }
+            (placed, x)
+        };
+        *self.buf.borrow_mut() = Some(glyph_buf.clear());
         Shaped {
             glyphs: placed,
             width: x,
@@ -181,11 +218,11 @@ impl TextFace {
     }
 
     pub(crate) fn shape(&self, text: &str, size: TextSize) -> Shaped {
-        self.0.shape(text, Self::px(size), &ShapeKind::Run, 0.0)
+        self.0.shape(text, Self::px(size), ShapeKind::Run, 0.0)
     }
 
     pub(crate) fn shape_figure(&self, text: &str, size: TextSize) -> Shaped {
-        self.0.shape(text, Self::px(size), &ShapeKind::Figure, 0.0)
+        self.0.shape(text, Self::px(size), ShapeKind::Figure, 0.0)
     }
 
     pub(crate) fn inner(&self) -> &Face {
@@ -205,7 +242,7 @@ impl DisplayFace {
     pub(crate) fn shape(&self, text: &str, size: DisplaySize, tracking_em: i16) -> Shaped {
         let px = Self::px(size);
         let tracking = px * tracking_em as f32 / 1000.0;
-        self.0.shape(text, px, &ShapeKind::Mark, tracking)
+        self.0.shape(text, px, ShapeKind::Mark, tracking)
     }
 
     pub(crate) fn inner(&self) -> &Face {
@@ -223,25 +260,6 @@ pub(crate) struct Shaped {
     pub glyphs: Vec<Placed>,
     pub width: f32,
     pub ascent: f32,
-}
-
-fn ot_features(kind: &ShapeKind) -> Vec<Feature> {
-    let mut f = vec![
-        Feature::new(Tag::new(b"kern"), 1, ..),
-        Feature::new(Tag::new(b"liga"), 1, ..),
-        Feature::new(Tag::new(b"calt"), 1, ..),
-    ];
-    match kind {
-        ShapeKind::Run => {}
-        ShapeKind::Figure => {
-            f.push(Feature::new(Tag::new(b"tnum"), 1, ..));
-            f.push(Feature::new(Tag::new(b"lnum"), 1, ..));
-        }
-        ShapeKind::Mark => {
-            f.push(Feature::new(Tag::new(b"case"), 1, ..));
-        }
-    }
-    f
 }
 
 #[cfg(test)]

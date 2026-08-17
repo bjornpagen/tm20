@@ -2,7 +2,7 @@
 
 use image::codecs::png::PngEncoder;
 use image::{ExtendedColorType, ImageEncoder};
-use tm20::graphics::{Graphics, width_bytes};
+use tm20::graphics::{Graphics, is_black, width_bytes};
 
 use crate::error::Error;
 
@@ -34,8 +34,7 @@ where
         let stride = width_bytes(g.width_dots);
         for y in 0..u32::from(g.height_dots) {
             for x in 0..u32::from(w) {
-                let byte = g.pixels[y as usize * stride + x as usize / 8];
-                if byte & (0x80 >> (x % 8)) == 0 {
+                if !is_black(&g.pixels, stride, x as usize, y as usize) {
                     continue;
                 }
                 let yy = y0 + y;

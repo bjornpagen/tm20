@@ -56,8 +56,8 @@ fn kinds() -> Vec<Frame<'static>> {
             size: TextSize::Pt11,
             lines: vec!["fn measure() -> u16 { 576 }".into()],
         }),
-        Frame::Figure(Figure::from_bits(8, 8, vec![true; 64]).unwrap()),
-        Frame::Math(Math::from_bits(8, 8, vec![true; 64], 6).unwrap()),
+        Frame::Figure(Figure::from_bits(8, 8, &[true; 64]).unwrap()),
+        Frame::Math(Math::from_bits(8, 8, &[true; 64], 6).unwrap()),
         Frame::Rule(Rule {
             thickness: Thickness::Two,
         }),
