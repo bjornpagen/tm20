@@ -1,7 +1,7 @@
 # tm20
 
 ESC/POS for Epson TM-T20 printers, proven on the TM-T20III (`04b8:0e28`).
-Two crates, one way of depending. There is no printer builder and no CUPS.
+Protocol, typesetter, markdown. There is no printer builder and no CUPS.
 
 - **`tm20`** — protocol. A `Document` of `Command` values encodes to bytes; a
   `Transport` writes them. USB, serial, TCP. `Command::Text` is CP437.
@@ -10,8 +10,12 @@ Two crates, one way of depending. There is no printer builder and no CUPS.
   sizes, leading on an 8-dot grid) compiles to one `tm20::Graphics`. OpenType
   lives here as bytes. Which face those bytes came from is the program that
   prints, not the library.
+- **`tm20-md`** — CommonMark 0.31.2 plus pipe tables, task lists, autolinks,
+  and footnotes, walked into a `Sheet`. comrak lives here. This crate does
+  not depend on `tm20`.
 
-`tm20-set` depends on `tm20`. Never the reverse.
+`tm20-set` depends on `tm20`. Never the reverse. The `tm20-set` binary lives
+in `tm20-cli` so markdown can depend on the typesetter without a crate cycle.
 
 ```rust
 use tm20::{encode, Command, CutKind, Document, Transport, Usb};
@@ -33,8 +37,10 @@ is hardcoded to the T20III product id until someone adds another.
 ```
 cargo run -p tm20 -- hello
 cargo run -p tm20 -- test all          # skip --wait if bulk IN is dirty
-cargo run -p tm20-set -- print ticket
-cargo run -p tm20-set -- print nhg     # needs Neue Haas Grotesk in ~/Library/Fonts
+cargo run --bin tm20-set -- print ticket
+cargo run --bin tm20-set -- print nhg     # needs Neue Haas Grotesk in ~/Library/Fonts
+cargo run --bin tm20-set -- print md path.md
+cargo run --bin tm20-set -- print md crates/tm20-md/fixtures
 ```
 
 `publish = false`. License is 0BSD.

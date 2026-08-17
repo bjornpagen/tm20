@@ -6,7 +6,7 @@ use std::num::NonZeroU32;
 
 use crate::error::Error;
 use crate::face::{Cut, FaceTable};
-use crate::leading::{GridSkip, GRID};
+use crate::leading::{GridSkip, GRID, TASK_BOX};
 use crate::size::{DisplaySize, TextSize};
 use tm20::PRINTABLE_DOTS;
 
@@ -134,34 +134,61 @@ pub enum Marker {
     Decimal { start: u32, delim: DecimalDelim },
 }
 
+/// One list item. A task replaces the dash or decimal with a drawn checkbox.
+pub struct ListItem<'a> {
+    pub task: Option<bool>,
+    pub frames: Vec<Frame<'a>>,
+}
+
+impl<'a> ListItem<'a> {
+    pub fn new(frames: Vec<Frame<'a>>) -> Self {
+        Self { task: None, frames }
+    }
+
+    pub fn task(checked: bool, frames: Vec<Frame<'a>>) -> Self {
+        Self {
+            task: Some(checked),
+            frames,
+        }
+    }
+}
+
 /// Hanging list. Marker in the margin; runovers align with the text, not the mark.
 pub struct List<'a> {
     pub size: TextSize,
     pub cut: Cut,
     pub marker: Marker,
     pub tight: bool,
-    pub items: Vec<Vec<Frame<'a>>>,
+    pub items: Vec<ListItem<'a>>,
 }
 
 impl<'a> List<'a> {
-    /// Marker plus a word space, ceiled to [`GRID`].
+    /// Marker plus a word space, ceiled to [`GRID`]. Closed so dash, two-digit
+    /// decimal, and a task box share a text column at this size.
     pub fn hang_dots(&self, faces: &FaceTable) -> Result<u16, Error> {
         let face = faces.text(self.cut)?;
         let space = face.shape(" ", self.size).width;
-        let mark_w = match self.marker {
-            Marker::Dash => face.shape(EN_DASH, self.size).width,
-            Marker::Decimal { start, delim } => {
-                let n = self.items.len() as u32;
-                (0..n)
-                    .map(|i| {
-                        let t = decimal_text(start.saturating_add(i), delim);
-                        face.shape_figure(&t, self.size).width
-                    })
-                    .fold(0.0f32, f32::max)
-            }
-        };
-        let units = ((mark_w + space) / GRID as f32).ceil().max(1.0) as u16;
+        let units = ((self.mark_width(faces)? + space) / GRID as f32)
+            .ceil()
+            .max(1.0) as u16;
         Ok(units * GRID)
+    }
+
+    /// Width of the mark column, before the word space and grid leftover.
+    /// Decimal figures right-align in this band; dash and task sit at its start.
+    pub(crate) fn mark_width(&self, faces: &FaceTable) -> Result<f32, Error> {
+        let face = faces.text(self.cut)?;
+        let mut mark_w = face.shape(EN_DASH, self.size).width;
+        mark_w = mark_w.max(face.shape_figure("10.", self.size).width);
+        mark_w = mark_w.max(TASK_BOX as f32);
+        if let Marker::Decimal { start, delim } = self.marker {
+            let n = self.items.len() as u32;
+            for i in 0..n {
+                let t = decimal_text(start.saturating_add(i), delim);
+                mark_w = mark_w.max(face.shape_figure(&t, self.size).width);
+            }
+        }
+        Ok(mark_w)
     }
 }
 
@@ -175,6 +202,12 @@ pub(crate) fn decimal_text(n: u32, delim: DecimalDelim) -> String {
 /// Block quote. Idle column, not a bar. Nested cap is three.
 pub struct Quote<'a> {
     pub frames: Vec<Frame<'a>>,
+}
+
+/// Preformatted lines, hung by [`GRID`]. Not a paragraph: spaces do not wrap.
+pub struct Code<'a> {
+    pub size: TextSize,
+    pub lines: Vec<Cow<'a, str>>,
 }
 
 /// 1-bit figure, already scaled to the measure. `true` is black.
@@ -252,16 +285,23 @@ pub enum Frame<'a> {
     Cols(Cols<'a>),
     List(List<'a>),
     Quote(Quote<'a>),
+    Code(Code<'a>),
     Figure(Figure),
     Rule(Rule),
+}
+
+/// One slot in the sheet’s note apparatus. Links and footnotes share the numbers.
+pub enum Note<'a> {
+    Dest(Cow<'a, str>),
+    Blocks(Vec<Frame<'a>>),
 }
 
 /// Authoring document. Compiles to one `Graphics`.
 pub struct Sheet<'a> {
     pub width: Measure,
     pub frames: Vec<Frame<'a>>,
-    /// Destinations for [`Span::note`]. 1-based; compose paints them after the frames.
-    pub notes: Vec<Cow<'a, str>>,
+    /// 1-based; compose paints them after the frames. [`Span::note`] indexes this.
+    pub notes: Vec<Note<'a>>,
 }
 
 impl<'a> Sheet<'a> {

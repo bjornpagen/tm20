@@ -3,6 +3,12 @@
 /// White-space module in dots. Divides Font A’s 24-dot cell. Not leading.
 pub const GRID: u16 = 8;
 
+/// Task-list checkbox side. Three modules; stroke sits on this square.
+pub const TASK_BOX: u16 = 3 * GRID;
+
+/// Notes rule length. GPO’s 50-point rule, snapped to the grid (~144 dots).
+pub const NOTE_RULE: u16 = 18 * GRID;
+
 /// Gap from the bottom of a rule to the cap-line, in device dots (~1 pt).
 pub const HANG: u16 = 3;
 
@@ -58,6 +64,10 @@ mod tests {
     fn skip_modules_on_grid() {
         assert_eq!(GridSkip::ONE.dots() % GRID, 0);
         assert_eq!(GridSkip::n(2).unwrap().dots() % GRID, 0);
+        assert_eq!(TASK_BOX % GRID, 0);
+        assert_eq!(NOTE_RULE % GRID, 0);
+        assert_eq!(TASK_BOX, 24);
+        assert_eq!(NOTE_RULE, 144);
     }
 
     #[test]

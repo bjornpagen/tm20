@@ -9,17 +9,19 @@ mod face;
 mod frame;
 mod leading;
 mod lower;
+mod preview;
 mod size;
 
 pub use compose::compose;
 pub use error::Error;
 pub use face::{Cut, DisplayFace, Face, FaceTable, TextFace};
 pub use frame::{
-    ColAlign, Cols, DecimalDelim, Figure, Frame, Head, List, Mark, MarkAlign, Marker, Measure,
-    Quote, Rule, Sheet, Span, TextBlock, Thickness, Tracking, EN_DASH,
+    Code, ColAlign, Cols, DecimalDelim, Figure, Frame, Head, List, ListItem, Mark, MarkAlign,
+    Marker, Measure, Note, Quote, Rule, Sheet, Span, TextBlock, Thickness, Tracking, EN_DASH,
 };
-pub use leading::{GridSkip, Leading, GRID, HANG};
+pub use leading::{pt_dots, GridSkip, Leading, GRID, HANG, NOTE_RULE, TASK_BOX};
 pub use lower::lower;
+pub use preview::preview_png;
 pub use size::{DisplaySize, TextSize, DPI};
 
 pub type Result<T> = std::result::Result<T, Error>;

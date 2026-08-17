@@ -4,8 +4,9 @@ use std::num::NonZeroU32;
 
 use tm20::document::Document;
 use tm20_set::{
-    ColAlign, Cols, Cut, DecimalDelim, DisplaySize, Figure, Frame, GridSkip, Head, List, Mark,
-    MarkAlign, Marker, Quote, Rule, Sheet, Span, TextBlock, TextSize, Thickness, Tracking,
+    ColAlign, Code, Cols, Cut, DecimalDelim, DisplaySize, Figure, Frame, GridSkip, Head, List,
+    ListItem, Mark, MarkAlign, Marker, Note, Quote, Rule, Sheet, Span, TextBlock, TextSize,
+    Thickness, Tracking,
 };
 
 use crate::kit::{nhg_table, system_table};
@@ -68,6 +69,10 @@ fn cols<'a>(cut: Cut, item: &'a str, amount: &'a str) -> Cols<'a> {
 
 fn item<'a>(cut: Cut, size: TextSize, text: &'a str) -> Vec<Frame<'a>> {
     vec![Frame::Text(TextBlock::plain(cut, size, text))]
+}
+
+fn li<'a>(cut: Cut, size: TextSize, text: &'a str) -> ListItem<'a> {
+    ListItem::new(item(cut, size, text))
 }
 
 fn ticket() -> Result<Document> {
@@ -151,12 +156,12 @@ fn prose() -> Result<Document> {
             marker: Marker::Dash,
             tight: true,
             items: vec![
-                item(
+                li(
                     Cut::Roman,
                     body,
                     "Leading follows the process: two points of slug, not one.",
                 ),
-                item(Cut::Roman, body, "A rule is a section, or it is nothing."),
+                li(Cut::Roman, body, "A rule is a section, or it is nothing."),
             ],
         }),
         Frame::Rule(Rule {
@@ -249,15 +254,16 @@ fn suite() -> Result<Document> {
                 "The column is the tape. White is adjacency, not a skip you type.",
             ),
         }),
-        Frame::Quote(Quote {
-            frames: item(Cut::Roman, body, "fn measure() -> u16 { 576 }"),
+        Frame::Code(Code {
+            size: body,
+            lines: vec!["fn measure() -> u16 { 576 }".into()],
         }),
         Frame::List(List {
             size: body,
             cut: Cut::Roman,
             marker: Marker::Dash,
             tight: true,
-            items: vec![vec![
+            items: vec![ListItem::new(vec![
                 Frame::Text(TextBlock::plain(
                     Cut::Roman,
                     body,
@@ -272,17 +278,17 @@ fn suite() -> Result<Document> {
                     },
                     tight: true,
                     items: vec![
-                        item(Cut::Roman, body, "Nested."),
-                        item(Cut::Roman, body, "Still nested."),
+                        li(Cut::Roman, body, "Nested."),
+                        li(Cut::Roman, body, "Still nested."),
                     ],
                 }),
-            ]],
+            ])],
         }),
         Frame::Figure(pig),
     ]);
     sheet.notes = vec![
-        "https://www.vignelli.com/canon.pdf".into(),
-        "Ruder, Typographie".into(),
+        Note::Dest("https://www.vignelli.com/canon.pdf".into()),
+        Note::Dest("Ruder, Typographie".into()),
     ];
     Ok(tm20_set::lower(&sheet, &faces)?)
 }

@@ -1,0 +1,17 @@
+[package]
+name = "tm20-cli"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Print a tm20-set Sheet or a CommonMark file on the TM-T20III"
+
+[[bin]]
+name = "tm20-set"
+path = "src/main.rs"
+
+[dependencies]
+tm20 = { path = "../tm20" }
+tm20-set = { path = "../tm20-set" }
+tm20-md = { path = "../tm20-md" }
+font-kit = "0.14"

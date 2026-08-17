@@ -22,6 +22,11 @@ pub fn system_table() -> Result<FaceTable> {
         system_text(KitWeight::NORMAL, KitStyle::Italic)?,
     );
     table.set_text(Cut::Bold, system_text(KitWeight::BOLD, KitStyle::Normal)?);
+    table.set_text(
+        Cut::BoldItalic,
+        system_text(KitWeight::BOLD, KitStyle::Italic)?,
+    );
+    table.set_text(Cut::Mono, commit_mono()?);
     table.set_display(
         Cut::Roman,
         system_display(KitWeight::NORMAL, KitStyle::Normal)?,
@@ -47,6 +52,11 @@ pub fn nhg_table() -> Result<FaceTable> {
         Cut::Bold,
         nhg_text("Neue Haas Grotesk Text Pro 75 Bold.otf")?,
     );
+    table.set_text(
+        Cut::BoldItalic,
+        nhg_text("Neue Haas Grotesk Text Pro 76 Bold Italic.otf")
+            .or_else(|_| nhg_text("Neue Haas Grotesk Text Pro 75 Bold.otf"))?,
+    );
     table.set_display(
         Cut::Roman,
         nhg_display("Neue Haas Grotesk Display Pro 55 Roman.otf")?,
@@ -54,12 +64,17 @@ pub fn nhg_table() -> Result<FaceTable> {
     if let Ok(light) = nhg_display("Neue Haas Grotesk Display Pro 45 Light.otf") {
         table.set_display(Cut::Light, light);
     }
+    table.set_text(Cut::Mono, commit_mono()?);
     Ok(table)
 }
 
 pub fn fonts_dir() -> PathBuf {
     let home = std::env::var_os("HOME").unwrap_or_default();
     Path::new(&home).join("Library/Fonts")
+}
+
+fn commit_mono() -> Result<TextFace> {
+    Ok(from_file("CommitMono-400-Regular.otf")?.text())
 }
 
 fn nhg_text(file: &str) -> Result<TextFace> {

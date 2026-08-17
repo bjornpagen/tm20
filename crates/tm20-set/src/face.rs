@@ -16,10 +16,12 @@ pub enum Cut {
     Italic,
     Medium,
     Bold,
+    BoldItalic,
+    Mono,
 }
 
 impl Cut {
-    const COUNT: usize = 5;
+    const COUNT: usize = 7;
 
     fn index(self) -> usize {
         self as usize
@@ -34,6 +36,8 @@ impl std::fmt::Display for Cut {
             Cut::Italic => "Italic",
             Cut::Medium => "Medium",
             Cut::Bold => "Bold",
+            Cut::BoldItalic => "BoldItalic",
+            Cut::Mono => "Mono",
         })
     }
 }
