@@ -25,10 +25,13 @@ impl Cell {
         self.origin.saturating_add(self.width)
     }
 
-    pub(crate) fn ink_x(self, line_width: f32) -> f32 {
+    pub(crate) fn ink_x(self, line_width: i32) -> i32 {
         match self.align {
-            ColAlign::Start => f32::from(self.origin),
-            ColAlign::End => f32::from(self.origin) + (f32::from(self.width) - line_width).max(0.0),
+            ColAlign::Start => crate::size::to_frac(self.origin),
+            ColAlign::End => {
+                crate::size::to_frac(self.origin)
+                    + (crate::size::to_frac(self.width) - line_width).max(0)
+            }
         }
     }
 }
@@ -449,8 +452,11 @@ mod tests {
         assert_eq!(p.col[0].origin, 0);
         assert_eq!(p.col[1].end(), 100);
         assert_eq!(p.col[1].origin - p.col[0].end(), GRID);
-        assert_eq!(p.col[0].ink_x(10.0), 0.0);
-        assert_eq!(p.col[1].ink_x(20.0), f32::from(p.col[1].origin));
+        assert_eq!(p.col[0].ink_x(crate::size::to_frac(10)), 0);
+        assert_eq!(
+            p.col[1].ink_x(crate::size::to_frac(20)),
+            crate::size::to_frac(p.col[1].origin)
+        );
     }
 
     #[test]
@@ -481,10 +487,14 @@ mod tests {
     #[test]
     fn start_ink_stays_at_origin() {
         let p = place_fit([ColAlign::Start, ColAlign::Start], [40, 10], 0, 100, GRID);
-        assert_eq!(p.col[1].ink_x(6.0), f32::from(p.col[1].origin));
+        assert_eq!(
+            p.col[1].ink_x(crate::size::to_frac(6)),
+            crate::size::to_frac(p.col[1].origin)
+        );
         assert_ne!(
-            p.col[1].ink_x(6.0),
-            f32::from(p.col[1].origin) + (f32::from(p.col[1].width) - 6.0)
+            p.col[1].ink_x(crate::size::to_frac(6)),
+            crate::size::to_frac(p.col[1].origin)
+                + (crate::size::to_frac(p.col[1].width) - crate::size::to_frac(6))
         );
     }
 

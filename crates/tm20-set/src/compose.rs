@@ -10,12 +10,12 @@ use crate::frame::{
     MarkAlign, Marker, Math, Note, Quote, Rule, Sheet, TextBlock, Thickness, decimal_text,
 };
 use crate::leading::{GRID, HANG, NOTE_RULE, TASK_BOX, pt_dots};
-use crate::size::{DisplaySize, TextSize};
+use crate::size::{DisplaySize, TextSize, ceil_dots, round_dots, to_frac};
 use tm20::graphics::{Graphics, GraphicsScale, is_black, max_height, set_black, width_bytes};
 
-const THRESHOLD: u8 = 96;
 const NEST_CAP: u8 = 3;
-const NOTE_RAISE: f32 = 0.4;
+const NOTE_RAISE_NUM: i32 = 2;
+const NOTE_RAISE_DEN: i32 = 5;
 
 /// Packed MSB-first raster. Same table as [`Graphics::pixels`]; paint writes
 /// the wire form. One buffer for the job, grown down the tape, sliced into bands.
@@ -337,10 +337,10 @@ fn extra(cur: &Cursor, to: Rhythm, next: u16) -> u16 {
 }
 
 struct MarkInk<'a> {
-    x: f32,
+    x: i32,
     face: &'a TextFace,
     shaped: Shaped,
-    px: f32,
+    ppem: u16,
 }
 
 enum Pending<'a> {
@@ -470,8 +470,8 @@ fn paint_mark(
     let faces = cx.faces;
     let face = faces.display(mark.cut)?;
     let skip = mark.size.skip_dots();
-    let px = DisplayFace::px(mark.size);
-    let measure = measure.max(1) as f32;
+    let ppem = mark.size.ppem();
+    let measure = to_frac(measure.max(1));
     let lines = wrap_mark(
         face,
         mark.size,
@@ -482,7 +482,7 @@ fn paint_mark(
     cx.cur.mark_slug = skip;
     for (li, line) in lines.iter().enumerate() {
         let shaped = face.shape(line, mark.size, mark.tracking.0);
-        let ascent = shaped_ink_ascent(face.inner(), px, &shaped);
+        let ascent = shaped_ink_ascent(face.inner(), ppem, &shaped);
         let b = if li == 0 {
             cx.cur.first_baseline(ascent, 0.0, skip)
         } else {
@@ -492,10 +492,10 @@ fn paint_mark(
             flush_marks(cx, b);
         }
         let x = match mark.align {
-            MarkAlign::Start => x0 as f32,
-            MarkAlign::Center => x0 as f32 + ((measure - shaped.width) * 0.5).max(0.0),
+            MarkAlign::Start => to_frac(x0),
+            MarkAlign::Center => to_frac(x0) + (measure - shaped.width).max(0) / 2,
         };
-        blit(cx.canvas, face.inner(), px, x, b, &shaped);
+        blit(cx.canvas, face.inner(), ppem, x, b, &shaped);
         seam(cx);
     }
     Ok(())
@@ -506,7 +506,7 @@ fn wrap_mark(
     size: DisplaySize,
     tracking: i16,
     text: &str,
-    measure: f32,
+    measure: i32,
 ) -> Vec<String> {
     let mut out = Vec::new();
     for hard in text.split('\n') {
@@ -528,7 +528,7 @@ fn wrap_mark_words(
     size: DisplaySize,
     tracking: i16,
     words: &[&str],
-    measure: f32,
+    measure: i32,
 ) -> Vec<String> {
     let n = words.len();
     if n == 0 {
@@ -559,7 +559,7 @@ fn wrap_mark_words(
             let cost = if w > measure || (last && n_boxes >= 2) {
                 0.0
             } else {
-                let r = f64::from(measure - w);
+                let r = (measure - w) as f64;
                 r * r
             };
             let total = dp[i] + cost;
@@ -602,7 +602,7 @@ fn paint_run(
     let lines = wrap_spans(
         block.size,
         &block.spans,
-        measure as f32,
+        to_frac(measure),
         cx.faces,
         Digits::Proportional,
     )?;
@@ -616,7 +616,7 @@ fn paint_run(
         if li == 0 {
             flush_marks(cx, b);
         }
-        paint_line(cx, block.size, x0 as f32, b, line, Digits::Proportional)?;
+        paint_line(cx, block.size, to_frac(x0), b, line, Digits::Proportional)?;
         if split {
             seam(cx);
         }
@@ -642,11 +642,11 @@ fn paint_quote(
 }
 
 fn paint_code(cx: &mut Cx<'_, '_>, code: &Code<'_>, x0: u16, _measure: u16) -> Result<(), Error> {
-    let x = x0.saturating_add(GRID) as f32;
+    let x = to_frac(x0.saturating_add(GRID));
     let faces = cx.faces;
     let face = faces.text(Cut::Mono)?;
     let skip = code.size.skip_dots();
-    let px = TextFace::px(code.size);
+    let ppem = code.size.ppem();
     let empty = std::borrow::Cow::Borrowed("");
     let lines: Vec<&std::borrow::Cow<'_, str>> = if code.lines.is_empty() {
         vec![&empty]
@@ -655,7 +655,7 @@ fn paint_code(cx: &mut Cx<'_, '_>, code: &Code<'_>, x0: u16, _measure: u16) -> R
     };
     for (li, line) in lines.iter().enumerate() {
         let shaped = face.shape(line.as_ref(), code.size);
-        let ascent = shaped_ink_ascent(face.inner(), px, &shaped);
+        let ascent = shaped_ink_ascent(face.inner(), ppem, &shaped);
         let b = if li == 0 {
             cx.cur.first_baseline(ascent, 0.0, skip)
         } else {
@@ -664,7 +664,7 @@ fn paint_code(cx: &mut Cx<'_, '_>, code: &Code<'_>, x0: u16, _measure: u16) -> R
         if li == 0 {
             flush_marks(cx, b);
         }
-        blit(cx.canvas, face.inner(), px, x, b, &shaped);
+        blit(cx.canvas, face.inner(), ppem, x, b, &shaped);
         seam(cx);
     }
     Ok(())
@@ -683,18 +683,19 @@ fn paint_figure(cx: &mut Cx<'_, '_>, fig: &Figure, x0: u16, measure: u16) -> Res
         let nf = cx.faces.text(Cut::Roman)?;
         let label = n.get().to_string();
         let shaped_note = nf.shape(&label, TextSize::Pt8);
-        let px8 = TextFace::px(TextSize::Pt8);
-        let raise = px8 * NOTE_RAISE;
-        let mut nx = x as f32 + fig.width as f32;
-        if nx + shaped_note.width > cx.canvas.width as f32 {
-            nx = (cx.canvas.width as f32 - shaped_note.width).max(x as f32);
+        let ppem8 = TextSize::Pt8.ppem();
+        let raise = f32::from(ppem8) * NOTE_RAISE_NUM as f32 / NOTE_RAISE_DEN as f32;
+        let mut nx = to_frac(x.saturating_add(fig.width));
+        let right = to_frac(cx.canvas.width);
+        if nx + shaped_note.width > right {
+            nx = (right - shaped_note.width).max(to_frac(x));
         }
         blit(
             cx.canvas,
             nf.inner(),
-            px8,
+            ppem8,
             nx,
-            top as f32 + px8 - raise,
+            top as f32 + f32::from(ppem8) - raise,
             &shaped_note,
         );
     }
@@ -771,16 +772,16 @@ fn paint_notes(cx: &mut Cx<'_, '_>, width: u16, notes: &[Note<'_>]) -> Result<()
     let content_x = hang;
     let content_w = width.saturating_sub(hang).max(1);
     let face = cx.faces.text(Cut::Roman)?;
-    let px = TextFace::px(size);
+    let ppem = size.ppem();
     for (i, note) in notes.iter().enumerate() {
         let t = decimal_text(1 + i as u32, crate::frame::DecimalDelim::Period);
         let s = face.shape_figure(&t, size);
-        let mx = (mark_w - s.width).max(0.0);
+        let mx = (mark_w - s.width).max(0);
         cx.pending.push(Pending::Glyph(MarkInk {
             x: mx,
             face,
             shaped: s,
-            px,
+            ppem,
         }));
         cx.cur.last = Some(Rhythm::Hang);
         match note {
@@ -819,9 +820,9 @@ fn paint_list(
     let content_x = x0.saturating_add(hang);
     let content_w = measure.saturating_sub(hang).max(1);
     let face = faces.text(list.cut)?;
-    let px = TextFace::px(list.size);
+    let ppem = list.size.ppem();
     let cap = face.shape("H", list.size);
-    let ascent = shaped_ink_ascent(face.inner(), px, &cap);
+    let ascent = shaped_ink_ascent(face.inner(), ppem, &cap);
     for (i, item) in list.items.iter().enumerate() {
         match item.mark {
             ItemMark::Task { checked } => {
@@ -833,11 +834,11 @@ fn paint_list(
             }
             ItemMark::List => {
                 let (mx, shaped) = match list.marker {
-                    Marker::Dash => (x0 as f32, face.shape(EN_DASH, list.size)),
+                    Marker::Dash => (to_frac(x0), face.shape(EN_DASH, list.size)),
                     Marker::Decimal { start, delim } => {
                         let t = decimal_text(start.saturating_add(i as u32), delim);
                         let s = face.shape_figure(&t, list.size);
-                        let x = (x0 as f32 + mark_w - s.width).max(x0 as f32);
+                        let x = (to_frac(x0) + mark_w - s.width).max(to_frac(x0));
                         (x, s)
                     }
                 };
@@ -845,7 +846,7 @@ fn paint_list(
                     x: mx,
                     face,
                     shaped,
-                    px,
+                    ppem,
                 }));
             }
         }
@@ -903,7 +904,7 @@ fn paint_grid<const N: usize>(
             cell_lines.push(wrap_spans(
                 size,
                 spans,
-                f32::from(cell.width),
+                to_frac(cell.width),
                 cx.faces,
                 col_digits(cell.align),
             )?);
@@ -954,9 +955,9 @@ fn measure_cols<const N: usize>(
         let mut p = 1u16;
         let mut m = 1u16;
         for row in rows {
-            let (unwrapped, _) = wrap_plan(size, &row[c], 10_000.0, faces, digits)?;
+            let (unwrapped, _) = wrap_plan(size, &row[c], to_frac(10_000), faces, digits)?;
             p = p.max(max_line_width(size, &unwrapped, faces, digits)?);
-            let (tight, _) = wrap_plan(size, &row[c], 1.0, faces, digits)?;
+            let (tight, _) = wrap_plan(size, &row[c], to_frac(1), faces, digits)?;
             m = m.max(max_line_width(size, &tight, faces, digits)?);
         }
         pref[c] = p.max(1);
@@ -985,7 +986,7 @@ fn max_line_width(
     let mut w = 1u16;
     for line in lines {
         let notes = note_face_of(faces, line)?;
-        w = w.max(line_width(size, line, digits, notes).ceil().max(1.0) as u16);
+        w = w.max(ceil_dots(line_width(size, line, digits, notes)).max(1));
     }
     Ok(w)
 }
@@ -1001,7 +1002,7 @@ fn allocation_cost<const N: usize>(
     for (c, w) in widths.iter().enumerate() {
         let digits = col_digits(align[c]);
         for row in rows {
-            let (_, cost) = wrap_plan(size, &row[c], f32::from(*w), faces, digits)?;
+            let (_, cost) = wrap_plan(size, &row[c], to_frac(*w), faces, digits)?;
             total += cost;
         }
     }
@@ -1027,7 +1028,7 @@ fn flush_marks(cx: &mut Cx<'_, '_>, baseline: f32) {
     for m in pending {
         match m {
             Pending::Glyph(m) => {
-                blit(cx.canvas, m.face.inner(), m.px, m.x, baseline, &m.shaped);
+                blit(cx.canvas, m.face.inner(), m.ppem, m.x, baseline, &m.shaped);
             }
             Pending::Task { x, checked, ascent } => {
                 draw_task(cx.canvas, x, baseline, ascent, checked);
@@ -1134,7 +1135,7 @@ impl<'a> Piece<'a> {
 fn paint_line(
     cx: &mut Cx<'_, '_>,
     size: TextSize,
-    x0: f32,
+    x0: i32,
     baseline: f32,
     line: &[Piece<'_>],
     digits: Digits,
@@ -1157,34 +1158,28 @@ fn paint_line(
                 let top = (baseline - math.ascent as f32).round() as i32;
                 blit_bits(
                     cx.canvas,
-                    x.round() as i32,
+                    round_dots(x),
                     top,
                     math.width,
                     math.height,
                     &math.bits,
                 );
-                x += math.width as f32;
+                x += to_frac(math.width);
             }
             Piece::Type { face, text, note } => {
                 let shaped = shape_text(size, face, text, digits);
-                blit(
-                    cx.canvas,
-                    face.inner(),
-                    TextFace::px(size),
-                    x,
-                    baseline,
-                    &shaped,
-                );
+                blit(cx.canvas, face.inner(), size.ppem(), x, baseline, &shaped);
                 x += shaped.width;
                 if let Some(n) = note {
                     let nf = note_face.expect("note_face_of checked");
                     let label = n.get().to_string();
                     let shaped_note = nf.shape(&label, TextSize::Pt8);
-                    let raise = TextFace::px(size) * NOTE_RAISE;
+                    let raise =
+                        f32::from(size.ppem()) * NOTE_RAISE_NUM as f32 / NOTE_RAISE_DEN as f32;
                     blit(
                         cx.canvas,
                         nf.inner(),
-                        TextFace::px(TextSize::Pt8),
+                        TextSize::Pt8.ppem(),
                         x,
                         baseline - raise,
                         &shaped_note,
@@ -1215,29 +1210,33 @@ fn line_metrics(size: TextSize, line: &[Piece<'_>], digits: Digits) -> (f32, f32
             }
             Piece::Type { face, text, .. } => {
                 let shaped = shape_text(size, face, text, digits);
-                ascent = ascent.max(shaped_ink_ascent(face.inner(), TextFace::px(size), &shaped));
+                ascent = ascent.max(shaped_ink_ascent(face.inner(), size.ppem(), &shaped));
             }
         }
     }
     (ascent, depth)
 }
 
-fn shaped_ink_ascent(face: &Face, px: f32, shaped: &Shaped) -> f32 {
-    let mut a = 0.0f32;
+fn shaped_ink_ascent(face: &Face, ppem: u16, shaped: &Shaped) -> f32 {
+    let mut a = 0i32;
     for g in &shaped.glyphs {
-        let (m, _) = face.raster_glyph(g.glyph_id, px);
-        if m.height == 0 {
+        let s = face.strike(g.glyph_id, ppem);
+        if s.height == 0 {
             continue;
         }
-        a = a.max(g.y + m.ymin as f32 + m.height as f32);
+        a = a.max(round_dots(g.y) + s.top);
     }
-    if a > 0.0 { a } else { shaped.ascent }
+    if a > 0 {
+        a as f32
+    } else {
+        round_dots(shaped.ascent) as f32
+    }
 }
 
 fn wrap_spans<'f>(
     size: TextSize,
     spans: &'f [crate::frame::Span<'_>],
-    measure: f32,
+    measure: i32,
     faces: &'f FaceTable,
     digits: Digits,
 ) -> Result<Vec<Vec<Piece<'f>>>, Error> {
@@ -1247,7 +1246,7 @@ fn wrap_spans<'f>(
 fn wrap_plan<'f>(
     size: TextSize,
     spans: &'f [crate::frame::Span<'_>],
-    measure: f32,
+    measure: i32,
     faces: &'f FaceTable,
     digits: Digits,
 ) -> Result<(Vec<Vec<Piece<'f>>>, f64), Error> {
@@ -1330,7 +1329,7 @@ fn wrap_plan<'f>(
 fn wrap_chunk_plan<'f>(
     size: TextSize,
     words: &[Piece<'f>],
-    measure: f32,
+    measure: i32,
     digits: Digits,
     note_face: Option<&TextFace>,
 ) -> (Vec<Vec<Piece<'f>>>, f64) {
@@ -1338,7 +1337,7 @@ fn wrap_chunk_plan<'f>(
     if n == 0 {
         return (vec![Vec::new()], 0.0);
     }
-    let mut ink = vec![0.0f32; n + 1];
+    let mut ink = vec![0i32; n + 1];
     for i in 0..n {
         ink[i + 1] = ink[i] + piece_width(size, words[i], digits, note_face);
     }
@@ -1346,9 +1345,9 @@ fn wrap_chunk_plan<'f>(
         .iter()
         .copied()
         .find_map(Piece::face)
-        .map_or(0.0, |face| face.shape(" ", size).width);
+        .map_or(0, |face| face.shape(" ", size).width);
     let width = |i: usize, j: usize| {
-        ink[j] - ink[i] + space * (j.saturating_sub(i).saturating_sub(1) as f32)
+        ink[j] - ink[i] + space * (j.saturating_sub(i).saturating_sub(1) as i32)
     };
     let mut dp = vec![f64::INFINITY; n + 1];
     let mut prev = vec![0usize; n + 1];
@@ -1364,7 +1363,7 @@ fn wrap_chunk_plan<'f>(
             let cost = if w > measure || (last && n_boxes >= 2) {
                 0.0
             } else {
-                let r = f64::from(measure - w);
+                let r = (measure - w) as f64;
                 r * r
             };
             let total = dp[i] + cost;
@@ -1395,9 +1394,9 @@ fn piece_width(
     piece: Piece<'_>,
     digits: Digits,
     note_face: Option<&TextFace>,
-) -> f32 {
+) -> i32 {
     match piece {
-        Piece::Math(math) => math.width as f32,
+        Piece::Math(math) => to_frac(math.width),
         Piece::Type { face, text, note } => {
             let mut w = shape_text(size, face, text, digits).width;
             if let (Some(n), Some(nf)) = (note, note_face) {
@@ -1413,16 +1412,16 @@ fn line_width(
     line: &[Piece<'_>],
     digits: Digits,
     note_face: Option<&TextFace>,
-) -> f32 {
+) -> i32 {
     if line.is_empty() {
-        return 0.0;
+        return 0;
     }
     let space = line
         .iter()
         .copied()
         .find_map(Piece::face)
-        .map_or(0.0, |face| face.shape(" ", size).width);
-    let mut w = 0.0;
+        .map_or(0, |face| face.shape(" ", size).width);
+    let mut w = 0;
     for (i, piece) in line.iter().enumerate() {
         if i > 0 {
             w += space;
@@ -1432,20 +1431,21 @@ fn line_width(
     w
 }
 
-fn blit(canvas: &mut Canvas, face: &Face, px: f32, x0: f32, baseline: f32, shaped: &Shaped) {
+fn blit(canvas: &mut Canvas, face: &Face, ppem: u16, x0: i32, baseline: f32, shaped: &Shaped) {
+    let base = baseline.round() as i32;
     for g in &shaped.glyphs {
-        let (metrics, bitmap) = face.raster_glyph(g.glyph_id, px);
-        if metrics.width == 0 || metrics.height == 0 {
+        let s = face.strike(g.glyph_id, ppem);
+        if s.width == 0 || s.height == 0 {
             continue;
         }
-        let origin_x = (x0 + g.x).round() as i32 + metrics.xmin;
-        let origin_y = (baseline - g.y).round() as i32 - metrics.ymin - metrics.height as i32;
-        for gy in 0..metrics.height {
-            for gx in 0..metrics.width {
-                if bitmap[gy * metrics.width + gx] < THRESHOLD {
-                    continue;
+        let origin_x = round_dots(x0 + g.x) + s.left;
+        let origin_y = base - round_dots(g.y) - s.top;
+        let stride = tm20::graphics::width_bytes(s.width);
+        for gy in 0..s.height as usize {
+            for gx in 0..s.width as usize {
+                if is_black(&s.bits, stride, gx, gy) {
+                    canvas.set(origin_x + gx as i32, origin_y + gy as i32);
                 }
-                canvas.set(origin_x + gx as i32, origin_y + gy as i32);
             }
         }
     }

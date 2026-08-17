@@ -13,12 +13,9 @@ categories = ["text-processing"]
 
 [dependencies]
 tm20 = { workspace = true }
-fontdue = "0.9"
 harfrust = "0.13"
+skrifa = "0.46"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-
-[dev-dependencies]
-font-kit = "0.14"
 
 [lints]
 workspace = true

@@ -12,6 +12,7 @@ mod leading;
 mod lower;
 mod preview;
 mod size;
+mod strike;
 
 pub use compose::compose;
 pub use error::Error;

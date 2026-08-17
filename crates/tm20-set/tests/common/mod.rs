@@ -1,11 +1,7 @@
-//! Load a [`FaceTable`]: system sans plus Commit Mono. Not a house grotesque.
+//! Load a [`FaceTable`]: Neue Haas Grotesk plus Commit Mono. CFF OpenType only.
 
 use std::path::Path;
 
-use font_kit::family_name::FamilyName;
-use font_kit::handle::Handle;
-use font_kit::properties::{Properties, Style as KitStyle, Weight as KitWeight};
-use font_kit::source::SystemSource;
 use tm20_set::{
     ColAlign, Cols, Cut, DecimalDelim, Face, FaceTable, Frame, GridSkip, List, ListFit, ListItem,
     Marker, Span, TextBlock, TextSize,
@@ -15,49 +11,47 @@ pub fn table() -> FaceTable {
     let mut table = FaceTable::new();
     table.set_text(
         Cut::Roman,
-        load(KitWeight::NORMAL, KitStyle::Normal)
-            .expect("system roman")
-            .text(),
+        load("Neue Haas Grotesk Text Pro 55 Roman.otf").text(),
     );
     table.set_text(
         Cut::Italic,
-        load(KitWeight::NORMAL, KitStyle::Italic)
-            .or_else(|_| load(KitWeight::NORMAL, KitStyle::Normal))
-            .expect("system italic")
-            .text(),
+        load("Neue Haas Grotesk Text Pro 56 Italic.otf").text(),
     );
     table.set_text(
         Cut::Bold,
-        load(KitWeight::BOLD, KitStyle::Normal)
-            .or_else(|_| load(KitWeight::NORMAL, KitStyle::Normal))
-            .expect("system bold")
-            .text(),
+        load("Neue Haas Grotesk Text Pro 75 Bold.otf").text(),
     );
     table.set_text(
         Cut::BoldItalic,
-        load(KitWeight::BOLD, KitStyle::Italic)
-            .or_else(|_| load(KitWeight::BOLD, KitStyle::Normal))
-            .or_else(|_| load(KitWeight::NORMAL, KitStyle::Italic))
-            .or_else(|_| load(KitWeight::NORMAL, KitStyle::Normal))
-            .expect("system bold italic")
-            .text(),
+        load_or(
+            "Neue Haas Grotesk Text Pro 76 Bold Italic.otf",
+            "Neue Haas Grotesk Text Pro 75 Bold.otf",
+        )
+        .text(),
     );
-    table.set_text(Cut::Mono, commit_mono().text());
+    table.set_text(Cut::Mono, load("CommitMono-400-Regular.otf").text());
     table.set_display(
         Cut::Roman,
-        load(KitWeight::NORMAL, KitStyle::Normal)
-            .expect("system display")
-            .display(),
+        load("Neue Haas Grotesk Display Pro 55 Roman.otf").display(),
     );
     table
 }
 
-pub fn commit_mono() -> Face {
+fn load(file: &str) -> Face {
     let home = std::env::var_os("HOME").unwrap_or_default();
-    let path = Path::new(&home).join("Library/Fonts/CommitMono-400-Regular.otf");
-    let bytes = std::fs::read(&path)
-        .unwrap_or_else(|_| panic!("Commit Mono Regular not in {}", path.display()));
-    Face::from_bytes(bytes).expect("Commit Mono parses")
+    let path = Path::new(&home).join("Library/Fonts").join(file);
+    let bytes = std::fs::read(&path).unwrap_or_else(|_| panic!("{file} not in {}", path.display()));
+    Face::from_bytes(bytes).unwrap_or_else(|_| panic!("{file} is CFF OpenType"))
+}
+
+fn load_or(file: &str, fallback: &str) -> Face {
+    let home = std::env::var_os("HOME").unwrap_or_default();
+    let path = Path::new(&home).join("Library/Fonts").join(file);
+    if path.exists() {
+        load(file)
+    } else {
+        load(fallback)
+    }
 }
 
 #[allow(dead_code)]
@@ -106,22 +100,5 @@ pub fn decimal_list(start: u32, items: Vec<ListItem<'_>>) -> List<'_> {
         },
         fit: ListFit::Tight,
         items,
-    }
-}
-
-fn load(weight: KitWeight, style: KitStyle) -> Result<Face, Box<dyn std::error::Error>> {
-    let handle = SystemSource::new()
-        .select_best_match(
-            &[FamilyName::SansSerif],
-            Properties::new().weight(weight).style(style),
-        )
-        .map_err(|_| "system sans-serif typeface not found")?;
-    match handle {
-        Handle::Path { path, font_index } => {
-            Ok(Face::from_bytes_index(std::fs::read(path)?, font_index)?)
-        }
-        Handle::Memory { bytes, font_index } => {
-            Ok(Face::from_bytes_index((*bytes).clone(), font_index)?)
-        }
     }
 }

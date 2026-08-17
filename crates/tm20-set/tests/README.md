@@ -1,8 +1,8 @@
 # tm20-set tests
 
 `cargo test -p tm20-set` does not need a printer. It loads a [`FaceTable`] from
-the system sans plus **Commit Mono** (`~/Library/Fonts/CommitMono-400-Regular.otf`).
-It does not name Neue Haas Grotesk.
+**Neue Haas Grotesk** and **Commit Mono** in `~/Library/Fonts`. Both are CFF
+OpenType; a TrueType face is `Error::Font`.
 
 Constructor checks that do not need a face live next to the type. Compose
 proofs live in `tests/`. Each test is one fact.
@@ -12,7 +12,7 @@ proofs live in `tests/`. Each test is one fact.
 - **`size`** — 11 pt = 31 dots, Plus2 skip 37; 8 pt Plus2 29; display 18 solid 51
 - **`leading`** — `GridSkip` on 8; Plus1 at 11 pt is 34; Solid equals body; `TASK_BOX` 24; `NOTE_RULE` 144
 - **`frame`** — `Measure::new(0)` is none; ragged figure bits and bad image bytes error; PNG keeps native size and shrinks if wider than the measure
-- **`face`** — garbage bytes are `Error::Font`
+- **`face`** — garbage bytes and TrueType are `Error::Font`; CFF OpenType only
 
 ## Compose (`algebra.rs`)
 

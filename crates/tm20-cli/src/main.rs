@@ -18,7 +18,7 @@ pub(crate) type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 fn usage() {
     let ids: Vec<_> = catalog().iter().map(|c| c.id).collect();
     eprintln!(
-        "tm20-set [--serial S] [--dry] [--png DIR] print [{}|all|md <path>]\n  sheets: {}\n  md path may be a file or a directory of *.md\n  --png writes a 2× preview next to USB; --dry stays bytes\n  nhg reads Neue Haas Grotesk from ~/Library/Fonts; Mono is Commit Mono",
+        "tm20-set [--serial S] [--dry] [--png DIR] print [{}|all|md <path>]\n  sheets: {}\n  md path may be a file or a directory of *.md\n  --png writes a 2× preview next to USB; --dry stays bytes\n  faces are Neue Haas Grotesk and Commit Mono from ~/Library/Fonts",
         ids.join("|"),
         ids.join(", ")
     );

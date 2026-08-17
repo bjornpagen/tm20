@@ -17,7 +17,6 @@ path = "src/main.rs"
 tm20 = { workspace = true }
 tm20-set = { workspace = true }
 tm20-md = { workspace = true }
-font-kit = "0.14"
 
 [lints]
 workspace = true

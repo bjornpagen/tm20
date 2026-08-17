@@ -242,21 +242,19 @@ impl List<'_> {
     /// Marker plus a word space, ceiled to [`GRID`]. Closed so dash, two-digit
     /// decimal, and a task box share a text column at this size.
     pub fn hang_dots(&self, faces: &FaceTable) -> Result<u16, Error> {
-        let face = faces.text(self.cut)?;
-        let space = face.shape(" ", self.size).width;
-        let units = ((self.mark_width(faces)? + space) / GRID as f32)
-            .ceil()
-            .max(1.0) as u16;
+        let space = faces.text(self.cut)?.shape(" ", self.size).width;
+        let grid = crate::size::to_frac(GRID);
+        let units = ((self.mark_width(faces)? + space + grid - 1) / grid).max(1) as u16;
         Ok(units * GRID)
     }
 
     /// Width of the mark column, before the word space and grid leftover.
     /// Decimal figures right-align in this band; dash and task sit at its start.
-    pub(crate) fn mark_width(&self, faces: &FaceTable) -> Result<f32, Error> {
+    pub(crate) fn mark_width(&self, faces: &FaceTable) -> Result<i32, Error> {
         let face = faces.text(self.cut)?;
         let mut mark_w = face.shape(EN_DASH, self.size).width;
         mark_w = mark_w.max(face.shape_figure("10.", self.size).width);
-        mark_w = mark_w.max(TASK_BOX as f32);
+        mark_w = mark_w.max(crate::size::to_frac(TASK_BOX));
         if let Marker::Decimal { start, delim } = self.marker {
             let n = self.items.len() as u32;
             for i in 0..n {

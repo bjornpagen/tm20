@@ -1,9 +1,28 @@
-//! Closed sizes. No `f32` point constructor.
+//! Closed sizes. No `f32` point constructor. Paint size is device [`ppem`](TextSize::ppem).
 
 use crate::leading::Leading;
 
 /// Thermal resolution of the TM-T20III.
 pub const DPI: f32 = 203.0;
+
+/// 26.6 device units. One dot is [`FRAC`].
+pub(crate) const FRAC: i32 = 64;
+
+pub(crate) fn to_frac(dots: u16) -> i32 {
+    i32::from(dots) * FRAC
+}
+
+pub(crate) fn round_dots(v: i32) -> i32 {
+    (v + FRAC / 2) >> 6
+}
+
+pub(crate) fn ceil_dots(v: i32) -> u16 {
+    if v <= 0 {
+        0
+    } else {
+        ((v + FRAC - 1) >> 6) as u16
+    }
+}
 
 fn body_dots(pt: f32) -> u16 {
     (pt * DPI / 72.0).round() as u16
@@ -26,6 +45,11 @@ impl TextSize {
 
     pub fn body_dots(self) -> u16 {
         body_dots(self.pt())
+    }
+
+    /// Device pixels per em. Same integer as [`body_dots`](Self::body_dots).
+    pub fn ppem(self) -> u16 {
+        self.body_dots()
     }
 
     /// Plus2 slug. Thermal ink spreads; one point of extra lead is not enough.
@@ -55,6 +79,11 @@ impl DisplaySize {
         body_dots(self.pt())
     }
 
+    /// Device pixels per em. Same integer as [`body_dots`](Self::body_dots).
+    pub fn ppem(self) -> u16 {
+        self.body_dots()
+    }
+
     /// Solid slug.
     pub fn skip_dots(self) -> u16 {
         Leading::Solid.skip_dots(self.body_dots())
@@ -68,6 +97,7 @@ mod tests {
     #[test]
     fn eleven_pt_is_31_dots() {
         assert_eq!(TextSize::Pt11.body_dots(), 31);
+        assert_eq!(TextSize::Pt11.ppem(), 31);
     }
 
     #[test]

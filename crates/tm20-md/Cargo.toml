@@ -21,7 +21,6 @@ ratex-types = "0.1.14"
 
 [dev-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }
-font-kit = "0.14"
 tm20 = { workspace = true }
 
 [lints]
