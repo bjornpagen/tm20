@@ -1,15 +1,13 @@
 //! Parsed CFF OpenType. Optical role is a second parse into [`TextFace`] or
 //! [`DisplayFace`]. Which [`Cut`] a face fills is decided outside this crate.
-//! HarfRust shapes; swash paints; this crate caches the strike.
+//! HarfRust shapes; fontdue paints; this crate caches the strike.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 
+use fontdue::{Font as RasterFont, FontSettings};
 use harfrust::font::FontFuncs;
 use harfrust::{Feature, FontRef, GlyphId, ShapeOptions, ShaperData, Tag, UnicodeBuffer};
-use swash::scale::{Render, ScaleContext, Source};
-use swash::zeno::Format;
-use swash::{CacheKey, FontRef as SwashFont};
 
 use crate::error::Error;
 use crate::size::{DisplaySize, FRAC, TextSize};
@@ -87,13 +85,11 @@ impl FaceTable {
 pub struct Face {
     bytes: Vec<u8>,
     index: u32,
-    offset: u32,
-    key: CacheKey,
+    raster: RasterFont,
     hb: ShaperData,
     buf: RefCell<Option<UnicodeBuffer>>,
     upem: u16,
     ascent: i16,
-    scale: RefCell<ScaleContext>,
     strikes: RefCell<HashMap<(u16, u16), Strike>>,
 }
 
@@ -115,20 +111,19 @@ fn scale(ppem: u16) -> i32 {
 }
 
 /// CFF OpenType is `OTTO` plus a `CFF ` or `CFF2` table. TrueType is a different magic.
-fn is_cff_sfnt(data: &[u8], offset: u32) -> bool {
-    let o = offset as usize;
-    let Some(magic) = data.get(o..o + 4) else {
+fn is_cff_sfnt(data: &[u8]) -> bool {
+    let Some(magic) = data.get(..4) else {
         return false;
     };
     if magic != b"OTTO" {
         return false;
     }
-    let Some(n) = data.get(o + 4..o + 6) else {
+    let Some(n) = data.get(4..6) else {
         return false;
     };
     let n = u16::from_be_bytes([n[0], n[1]]) as usize;
     for i in 0..n {
-        let rec = o + 12 + i * 16;
+        let rec = 12 + i * 16;
         let Some(tag) = data.get(rec..rec + 4) else {
             return false;
         };
@@ -139,12 +134,12 @@ fn is_cff_sfnt(data: &[u8], offset: u32) -> bool {
     false
 }
 
-struct Hinted<'a> {
+struct StrikeAdvance<'a> {
     face: &'a Face,
     ppem: u16,
 }
 
-impl FontFuncs for Hinted<'_> {
+impl FontFuncs for StrikeAdvance<'_> {
     fn advance_width(&mut self, builtin: &harfrust::font::BuiltinFontFuncs, glyph: GlyphId) -> i32 {
         let id = u16::try_from(glyph.to_u32()).unwrap_or(0);
         let strike = self.face.strike(id, self.ppem);
@@ -162,35 +157,37 @@ impl Face {
     }
 
     pub fn from_bytes_index(bytes: Vec<u8>, index: u32) -> Result<Self, Error> {
-        let (upem, ascent, offset, key, hb) = {
-            let font = FontRef::from_index(&bytes, index).map_err(|_| Error::Font)?;
-            let swash = SwashFont::from_index(&bytes, index as usize).ok_or(Error::Font)?;
-            if !is_cff_sfnt(swash.data, swash.offset) {
-                return Err(Error::Font);
-            }
-            let metrics = swash.metrics(&[]);
-            let upem = metrics.units_per_em;
-            if upem == 0 {
-                return Err(Error::Font);
-            }
-            (
-                upem,
-                metrics.ascent.round() as i16,
-                swash.offset,
-                swash.key,
-                ShaperData::new(&font),
-            )
-        };
+        let font = FontRef::from_index(&bytes, index).map_err(|_| Error::Font)?;
+        if !is_cff_sfnt(&bytes) {
+            return Err(Error::Font);
+        }
+        let raster = RasterFont::from_bytes(
+            bytes.as_slice(),
+            FontSettings {
+                collection_index: index,
+                ..FontSettings::default()
+            },
+        )
+        .map_err(|_| Error::Font)?;
+        let upem_f = raster.units_per_em();
+        if !(upem_f > 0.0 && upem_f <= f32::from(u16::MAX)) {
+            return Err(Error::Font);
+        }
+        let upem = upem_f as u16;
+        let ascent = raster
+            .horizontal_line_metrics(upem_f)
+            .ok_or(Error::Font)?
+            .ascent
+            .round() as i16;
+        let hb = ShaperData::new(&font);
         Ok(Self {
             bytes,
             index,
-            offset,
-            key,
+            raster,
             hb,
             buf: RefCell::new(Some(UnicodeBuffer::new())),
             upem,
             ascent,
-            scale: RefCell::new(ScaleContext::new()),
             strikes: RefCell::new(HashMap::new()),
         })
     }
@@ -212,31 +209,18 @@ impl Face {
     }
 
     fn paint_strike(&self, glyph_id: u16, ppem: u16) -> Strike {
-        let font = SwashFont {
-            data: &self.bytes,
-            offset: self.offset,
-            key: self.key,
-        };
-        let advance_px = font
-            .glyph_metrics(&[])
-            .scale(f32::from(ppem))
-            .advance_width(glyph_id);
-        let mut scale = self.scale.borrow_mut();
-        let mut scaler = scale.builder(font).size(f32::from(ppem)).hint(true).build();
-        match Render::new(&[Source::Outline])
-            .format(Format::Alpha)
-            .render(&mut scaler, glyph_id)
-        {
-            Some(image) => strike::from_mask(
-                image.placement.left,
-                image.placement.top,
-                image.placement.width,
-                image.placement.height,
-                &image.data,
-                advance_px,
-            ),
-            None => Strike::empty((advance_px * FRAC as f32).round() as i32),
-        }
+        let (metrics, bitmap) = self.raster.rasterize_indexed(glyph_id, f32::from(ppem));
+        let width = u32::try_from(metrics.width).unwrap_or(0);
+        let height = u32::try_from(metrics.height).unwrap_or(0);
+        let top = metrics.ymin.saturating_add(height as i32);
+        strike::from_mask(
+            metrics.xmin,
+            top,
+            width,
+            height,
+            &bitmap,
+            metrics.advance_width,
+        )
     }
 
     pub(crate) fn strike(&self, glyph_id: u16, ppem: u16) -> Strike {
@@ -268,7 +252,7 @@ impl Face {
         buf.clear();
         buf.push_str(text);
         buf.guess_segment_properties();
-        let mut hinted = Hinted { face: self, ppem };
+        let mut advances = StrikeAdvance { face: self, ppem };
         let glyph_buf = match kind {
             ShapeKind::Run => {
                 let features = [
@@ -281,7 +265,7 @@ impl Face {
                     ShapeOptions::new()
                         .scale(Some(scale(ppem)))
                         .features(&features)
-                        .font_funcs(Some(&mut hinted)),
+                        .font_funcs(Some(&mut advances)),
                 )
             }
             ShapeKind::Figure => {
@@ -297,7 +281,7 @@ impl Face {
                     ShapeOptions::new()
                         .scale(Some(scale(ppem)))
                         .features(&features)
-                        .font_funcs(Some(&mut hinted)),
+                        .font_funcs(Some(&mut advances)),
                 )
             }
             ShapeKind::Mark => {
@@ -312,7 +296,7 @@ impl Face {
                     ShapeOptions::new()
                         .scale(Some(scale(ppem)))
                         .features(&features)
-                        .font_funcs(Some(&mut hinted)),
+                        .font_funcs(Some(&mut advances)),
                 )
             }
         };

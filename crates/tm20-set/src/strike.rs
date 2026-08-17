@@ -1,4 +1,4 @@
-//! Swash coverage mask → packed 1-bit strike. A printer dot is ink at half coverage.
+//! Unhinted coverage mask → packed 1-bit strike. A printer dot is ink at coverage 96.
 
 use tm20::graphics::{set_black, width_bytes};
 
@@ -28,8 +28,8 @@ impl Strike {
     }
 }
 
-/// Coverage occupies the pixel when it is at least half.
-const INK: u8 = 128;
+/// Coverage occupies the pixel when it meets the original compose cut.
+const INK: u8 = 96;
 
 pub(crate) fn from_mask(
     left: i32,
