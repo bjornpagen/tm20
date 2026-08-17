@@ -3,14 +3,22 @@ name = "tm20-set"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-publish.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
 description = "Typesetting language for tm20: a Sheet of Frames lowers to protocol Graphics"
+keywords = ["escpos", "typesetting", "thermal", "opentype", "printer"]
+categories = ["text-processing"]
 
 [dependencies]
-tm20 = { path = "../tm20" }
+tm20 = { workspace = true }
 fontdue = "0.9"
 harfrust = "0.13"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
 [dev-dependencies]
 font-kit = "0.14"
+
+[lints]
+workspace = true

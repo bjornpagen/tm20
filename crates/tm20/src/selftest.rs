@@ -3,7 +3,7 @@
 use crate::barcode::{Barcode, BarcodeKind, BarcodeOptions, Code128Set};
 use crate::command::{Align, CashDrawerPin, CodePage, Command, CutKind, Font, Underline};
 use crate::document::Document;
-use crate::graphics::{pack, Graphics, GraphicsScale};
+use crate::graphics::{Graphics, GraphicsScale, pack};
 use crate::host::{hello, rule, ruler};
 use crate::symbol::{
     DataMatrix, DataMatrixType, Gs1DataBar, Gs1DataBarType, Gs1DataBarWidth, MaxiCode,

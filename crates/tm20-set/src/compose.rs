@@ -5,12 +5,12 @@ use std::num::NonZeroU32;
 use crate::error::Error;
 use crate::face::{Cut, DisplayFace, Face, FaceTable, Shaped, TextFace};
 use crate::frame::{
-    decimal_text, Code, ColAlign, ColBody, Cols, Figure, Frame, Head, ItemMark, List, ListFit,
-    ListItem, MarkAlign, Marker, Math, Note, Quote, Rule, Sheet, TextBlock, Thickness, EN_DASH,
+    Code, ColAlign, ColBody, Cols, EN_DASH, Figure, Frame, Head, ItemMark, List, ListFit, ListItem,
+    MarkAlign, Marker, Math, Note, Quote, Rule, Sheet, TextBlock, Thickness, decimal_text,
 };
-use crate::leading::{pt_dots, GRID, HANG, NOTE_RULE, TASK_BOX};
+use crate::leading::{GRID, HANG, NOTE_RULE, TASK_BOX, pt_dots};
 use crate::size::TextSize;
-use tm20::graphics::{pack, Graphics, GraphicsScale};
+use tm20::graphics::{Graphics, GraphicsScale, pack};
 
 const THRESHOLD: u8 = 96;
 const NEST_CAP: u8 = 3;
@@ -204,7 +204,7 @@ fn slug(frame: &Frame<'_>) -> u16 {
         Frame::Head(h) => h.size.skip_dots(),
         Frame::List(l) => l.size.skip_dots(),
         Frame::Cols(c) => c.size.skip_dots(),
-        Frame::Quote(q) => q.frames.first().map(slug).unwrap_or(0),
+        Frame::Quote(q) => q.frames.first().map_or(0, slug),
         Frame::Code(c) => c.size.skip_dots(),
         Frame::Mark(m) => m.size.skip_dots(),
         Frame::Figure(_) => GRID,
@@ -881,10 +881,10 @@ fn paint_line(
     let mut x = x0;
     let note_face = note_face_of(cx.faces, line)?;
     for (i, piece) in line.iter().enumerate() {
-        if i > 0 {
-            if let Some(face) = line.iter().find_map(LineSpan::face) {
-                x += face.shape(" ", size).width;
-            }
+        if i > 0
+            && let Some(face) = line.iter().find_map(LineSpan::face)
+        {
+            x += face.shape(" ", size).width;
         }
         match piece {
             LineSpan::Math(math) => {
@@ -972,11 +972,7 @@ fn shaped_ink_ascent(face: &Face, px: f32, shaped: &Shaped) -> f32 {
         }
         a = a.max(g.y + m.ymin as f32 + m.height as f32);
     }
-    if a > 0.0 {
-        a
-    } else {
-        shaped.ascent
-    }
+    if a > 0.0 { a } else { shaped.ascent }
 }
 
 fn wrap_spans<'f>(
@@ -999,9 +995,7 @@ fn wrap_spans<'f>(
     for span in spans {
         match span {
             crate::frame::Span::Math(math) => {
-                let face = empty_face
-                    .map(Ok)
-                    .unwrap_or_else(|| faces.text(Cut::Roman))?;
+                let face = empty_face.map_or_else(|| faces.text(Cut::Roman), Ok)?;
                 empty_face = Some(face);
                 chunks.last_mut().unwrap().push(Word::Math(math));
             }
@@ -1091,9 +1085,7 @@ fn wrap_chunk<'f>(
             }
             let n_boxes = j - i;
             let last = j == n;
-            let cost = if w > measure {
-                0.0
-            } else if last && n_boxes >= 2 {
+            let cost = if w > measure || (last && n_boxes >= 2) {
                 0.0
             } else {
                 let r = (measure - w) as f64;
@@ -1129,7 +1121,7 @@ fn words_to_line<'f>(words: &[Word<'f>]) -> Vec<LineSpan<'f>> {
 
 fn push_word<'a>(line: &mut Vec<LineSpan<'a>>, word: &Word<'a>) {
     match word {
-        Word::Math(math) => line.push(LineSpan::Math(*math)),
+        Word::Math(math) => line.push(LineSpan::Math(math)),
         Word::Type {
             face,
             text,
@@ -1151,7 +1143,7 @@ fn push_word<'a>(line: &mut Vec<LineSpan<'a>>, word: &Word<'a>) {
                 *prev_note = *note;
             }
             _ => line.push(LineSpan::Type {
-                face: *face,
+                face,
                 text: text.clone(),
                 note: *note,
                 digits: *digits,
@@ -1163,10 +1155,10 @@ fn push_word<'a>(line: &mut Vec<LineSpan<'a>>, word: &Word<'a>) {
 fn line_width(size: TextSize, line: &[LineSpan<'_>], note_face: Option<&TextFace>) -> f32 {
     let mut w = 0.0;
     for (i, piece) in line.iter().enumerate() {
-        if i > 0 {
-            if let Some(face) = line.iter().find_map(LineSpan::face) {
-                w += face.shape(" ", size).width;
-            }
+        if i > 0
+            && let Some(face) = line.iter().find_map(LineSpan::face)
+        {
+            w += face.shape(" ", size).width;
         }
         match piece {
             LineSpan::Math(math) => w += math.width as f32,
@@ -1177,10 +1169,8 @@ fn line_width(size: TextSize, line: &[LineSpan<'_>], note_face: Option<&TextFace
                 digits,
             } => {
                 w += shape_text(size, face, text, *digits).width;
-                if let Some(n) = note {
-                    if let Some(nf) = note_face {
-                        w += nf.shape(&n.get().to_string(), TextSize::Pt8).width;
-                    }
+                if let (Some(n), Some(nf)) = (note, note_face) {
+                    w += nf.shape(&n.get().to_string(), TextSize::Pt8).width;
                 }
             }
         }

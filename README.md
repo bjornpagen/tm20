@@ -3,9 +3,24 @@
 ESC/POS for Epson TM-T20 printers, proven on the TM-T20III (`04b8:0e28`).
 Protocol, typesetter, markdown. There is no printer builder and no CUPS.
 
+Pinned to **nightly-2026-08-15** (`rust-toolchain.toml`), same dated nightly
+as bumbledb. Edition 2024. `cargo clippy --workspace --all-targets -- -D warnings`
+is the lint gate (`all` + `pedantic`, `unsafe_code = deny`).
+
+Crates.io, 0BSD, **0.1.0**:
+
+```toml
+tm20 = "0.1"
+tm20-set = "0.1"
+tm20-md = "0.1"
+```
+
+The `tm20-set` binary lives in unpublished `tm20-cli` so markdown can depend
+on the typesetter without a crate cycle.
+
 - **`tm20`** — protocol. A `Document` of `Command` values encodes to bytes; a
   `Transport` writes them. USB, serial, TCP. `Command::Text` is CP437.
-  The printer never sees a font.
+  The printer never sees a font. `cargo install tm20` is the protocol CLI.
 - **`tm20-set`** — typesetter. A `Sheet` of `Frame`s (flush left, Vignelli
   sizes, leading on an 8-dot grid) compiles to one `tm20::Graphics`. OpenType
   lives here as bytes. Which face those bytes came from is the program that
@@ -15,8 +30,7 @@ Protocol, typesetter, markdown. There is no printer builder and no CUPS.
   `Sheet`. Dollars stay currency. comrak and RaTeX live here. This crate does
   not depend on `tm20`.
 
-`tm20-set` depends on `tm20`. Never the reverse. The `tm20-set` binary lives
-in `tm20-cli` so markdown can depend on the typesetter without a crate cycle.
+`tm20-set` depends on `tm20`. Never the reverse.
 
 ```rust
 use tm20::{encode, Command, CutKind, Document, Transport, Usb};
@@ -43,5 +57,3 @@ cargo run --bin tm20-set -- print nhg     # needs Neue Haas Grotesk in ~/Library
 cargo run --bin tm20-set -- print md path.md
 cargo run --bin tm20-set -- print md crates/tm20-md/fixtures
 ```
-
-`publish = false`. License is 0BSD.

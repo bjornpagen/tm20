@@ -38,7 +38,7 @@ fn encode_one(cmd: &Command, out: &mut Vec<u8>) -> Result<(), EncodeError> {
             CutKind::Full => out.extend_from_slice(&[GS, b'V', b'A', 0]),
             CutKind::Partial => out.extend_from_slice(&[GS, b'V', b'B', 0]),
         },
-        Command::Feed { lines } => out.extend(std::iter::repeat(0x0a).take(*lines as usize)),
+        Command::Feed { lines } => out.extend(std::iter::repeat_n(0x0a, *lines as usize)),
         Command::FeedDots { dots } => out.extend_from_slice(&[ESC, b'J', *dots]),
         Command::CharSpacing { dots } => out.extend_from_slice(&[ESC, b' ', *dots]),
         Command::AbsolutePosition { dots } => {
@@ -46,7 +46,7 @@ fn encode_one(cmd: &Command, out: &mut Vec<u8>) -> Result<(), EncodeError> {
             out.extend_from_slice(&[ESC, b'$', lo, hi]);
         }
         Command::RelativePosition { dots } => {
-            let [lo, hi] = u16_le(*dots as u16);
+            let [lo, hi] = u16_le((*dots).cast_unsigned());
             out.extend_from_slice(&[ESC, b'\\', lo, hi]);
         }
         Command::HorizontalTab => out.push(HT),
@@ -232,7 +232,7 @@ mod tests {
     fn every_command_variant_encodes() {
         use crate::barcode::{Barcode, BarcodeKind, BarcodeOptions, Code128Set};
         use crate::command::PrintSpeed;
-        use crate::graphics::{pack, Graphics, GraphicsScale};
+        use crate::graphics::{Graphics, GraphicsScale, pack};
         use crate::status::StatusRequest;
         use crate::symbol::{
             DataMatrix, DataMatrixType, Gs1DataBar, Gs1DataBarType, Gs1DataBarWidth, MaxiCode,

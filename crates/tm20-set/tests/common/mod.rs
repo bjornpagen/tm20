@@ -71,7 +71,7 @@ pub fn cols<'a>(cut: Cut, item: &'a str, amount: &'a str) -> Cols<'a> {
 }
 
 #[allow(dead_code)]
-pub fn plain<'a>(text: &'a str) -> Vec<Frame<'a>> {
+pub fn plain(text: &str) -> Vec<Frame<'_>> {
     vec![Frame::Text(TextBlock::plain(
         Cut::Roman,
         TextSize::Pt11,
@@ -80,12 +80,12 @@ pub fn plain<'a>(text: &'a str) -> Vec<Frame<'a>> {
 }
 
 #[allow(dead_code)]
-pub fn item<'a>(text: &'a str) -> ListItem<'a> {
+pub fn item(text: &str) -> ListItem<'_> {
     ListItem::new(plain(text))
 }
 
 #[allow(dead_code)]
-pub fn dash_list<'a>(items: Vec<ListItem<'a>>) -> List<'a> {
+pub fn dash_list(items: Vec<ListItem<'_>>) -> List<'_> {
     List {
         size: TextSize::Pt11,
         cut: Cut::Roman,
@@ -96,7 +96,7 @@ pub fn dash_list<'a>(items: Vec<ListItem<'a>>) -> List<'a> {
 }
 
 #[allow(dead_code)]
-pub fn decimal_list<'a>(start: u32, items: Vec<ListItem<'a>>) -> List<'a> {
+pub fn decimal_list(start: u32, items: Vec<ListItem<'_>>) -> List<'_> {
     List {
         size: TextSize::Pt11,
         cut: Cut::Roman,

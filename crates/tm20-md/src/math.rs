@@ -1,8 +1,8 @@
 //! Raster LaTeX with RaTeX. Faces stay in KaTeX; they never enter FaceTable.
 
-use ratex_layout::{layout, to_display_list, LayoutOptions};
+use ratex_layout::{LayoutOptions, layout, to_display_list};
 use ratex_parser::parser::parse;
-use ratex_render::{render_to_png, RenderOptions};
+use ratex_render::{RenderOptions, render_to_png};
 use ratex_types::color::Color;
 use ratex_types::math_style::MathStyle;
 use tm20_set::{Math, TextSize};

@@ -109,9 +109,8 @@ impl Pdf417Ecc {
     fn bytes(self) -> Result<(u8, u8), EncodeError> {
         match self {
             Pdf417Ecc::Level(n) if n <= 8 => Ok((48, 48 + n)),
-            Pdf417Ecc::Level(n) => Err(EncodeError::Pdf417CorrectionRatio(n)),
             Pdf417Ecc::Ratio(n) if (1..=40).contains(&n) => Ok((49, n)),
-            Pdf417Ecc::Ratio(n) => Err(EncodeError::Pdf417CorrectionRatio(n)),
+            Pdf417Ecc::Level(n) | Pdf417Ecc::Ratio(n) => Err(EncodeError::Pdf417CorrectionRatio(n)),
         }
     }
 }
@@ -378,18 +377,26 @@ mod tests {
             ecc: QrEcc::M,
         })
         .unwrap();
-        assert!(bytes
-            .windows(9)
-            .any(|w| w == [0x1d, b'(', b'k', 4, 0, 49, 65, 50, 0]));
-        assert!(bytes
-            .windows(8)
-            .any(|w| w == [0x1d, b'(', b'k', 3, 0, 49, 67, 4]));
-        assert!(bytes
-            .windows(8)
-            .any(|w| w == [0x1d, b'(', b'k', 3, 0, 49, 69, 49]));
-        assert!(bytes
-            .windows(8)
-            .any(|w| w == [0x1d, b'(', b'k', 8, 0, 49, 80, 48]));
+        assert!(
+            bytes
+                .windows(9)
+                .any(|w| w == [0x1d, b'(', b'k', 4, 0, 49, 65, 50, 0])
+        );
+        assert!(
+            bytes
+                .windows(8)
+                .any(|w| w == [0x1d, b'(', b'k', 3, 0, 49, 67, 4])
+        );
+        assert!(
+            bytes
+                .windows(8)
+                .any(|w| w == [0x1d, b'(', b'k', 3, 0, 49, 69, 49])
+        );
+        assert!(
+            bytes
+                .windows(8)
+                .any(|w| w == [0x1d, b'(', b'k', 8, 0, 49, 80, 48])
+        );
         assert!(bytes.windows(5).any(|w| w == b"HELLO"));
         assert!(bytes.ends_with(&[0x1d, b'(', b'k', 3, 0, 49, 81, 48]));
     }

@@ -4,8 +4,8 @@ mod common;
 
 use tm20::encode::encode;
 use tm20_set::{
-    lower, Code, Cut, DisplaySize, Figure, Frame, Head, Mark, MarkAlign, Math, Quote, Rule, Sheet,
-    Span, TextBlock, TextSize, Thickness, Tracking,
+    Code, Cut, DisplaySize, Figure, Frame, Head, Mark, MarkAlign, Math, Quote, Rule, Sheet, Span,
+    TextBlock, TextSize, Thickness, Tracking, lower,
 };
 
 fn cover(frame: &Frame<'_>) {

@@ -163,9 +163,7 @@ pub fn encode_cp437(s: &str) -> Vec<u8> {
             bytes.push(code as u8);
         } else if let Some(mapped) = map_extended(ch) {
             bytes.push(mapped);
-        } else if code < 0x20 || code == 0x7f {
-            continue;
-        } else {
+        } else if code >= 0x20 && code != 0x7f {
             bytes.push(b'?');
         }
     }

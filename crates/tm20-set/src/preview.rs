@@ -2,7 +2,7 @@
 
 use image::codecs::png::PngEncoder;
 use image::{ExtendedColorType, ImageEncoder};
-use tm20::graphics::{width_bytes, Graphics};
+use tm20::graphics::{Graphics, width_bytes};
 
 use crate::error::Error;
 

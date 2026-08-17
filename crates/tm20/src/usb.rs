@@ -8,9 +8,9 @@
 use std::io::{Read, Write};
 use std::time::{Duration, Instant};
 
+use nusb::MaybeFuture;
 use nusb::descriptors::TransferType;
 use nusb::transfer::{Bulk, ControlIn, ControlType, Direction, In, Out, Recipient};
-use nusb::MaybeFuture;
 
 use crate::error::{Result, UsbError};
 use crate::transport::Transport;
@@ -95,9 +95,7 @@ impl Usb {
             .find(|d| {
                 d.vendor_id() == VID
                     && d.product_id() == PID
-                    && serial
-                        .map(|want| d.serial_number() == Some(want))
-                        .unwrap_or(true)
+                    && serial.is_none_or(|want| d.serial_number() == Some(want))
             })
             .ok_or(UsbError::NotFound {
                 vid: VID,
@@ -148,8 +146,7 @@ impl Usb {
         trace(&format!(
             "open {}ms iface={iface_num} out={out:#04x} in={}",
             started.elapsed().as_millis(),
-            inp.map(|a| format!("{a:#04x}"))
-                .unwrap_or_else(|| "none".into())
+            inp.map_or_else(|| "none".into(), |a| format!("{a:#04x}"))
         ));
 
         Ok(Self {
@@ -201,12 +198,7 @@ impl Usb {
                 Duration::from_millis(500),
             )
             .wait()
-            .map_err(|e| {
-                UsbError::Transfer(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                ))
-            })?;
+            .map_err(|e| UsbError::Transfer(std::io::Error::other(e.to_string())))?;
         let byte = *data.first().ok_or_else(|| {
             UsbError::Transfer(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,

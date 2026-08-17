@@ -30,7 +30,7 @@ pub struct Graphics {
 }
 
 pub fn width_bytes(width_dots: u16) -> usize {
-    ((width_dots as usize) + 7) / 8
+    (width_dots as usize).div_ceil(8)
 }
 
 /// Pack row-major pixels, `true` = black, MSB first in each byte.

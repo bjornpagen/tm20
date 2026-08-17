@@ -3,12 +3,17 @@ name = "tm20-md"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-publish.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
 description = "CommonMark 0.31.2 plus pipe tables and LaTeX math, lowered to a tm20-set Sheet"
+keywords = ["markdown", "commonmark", "latex", "typesetting", "thermal"]
+categories = ["text-processing"]
 
 [dependencies]
 comrak = { version = "0.54", default-features = false }
-tm20-set = { path = "../tm20-set" }
+tm20-set = { workspace = true }
 ratex-parser = "0.1.14"
 ratex-layout = "0.1.14"
 ratex-render = { version = "0.1.14", features = ["embed-fonts"] }
@@ -17,4 +22,7 @@ ratex-types = "0.1.14"
 [dev-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }
 font-kit = "0.14"
-tm20 = { path = "../tm20" }
+tm20 = { workspace = true }
+
+[lints]
+workspace = true

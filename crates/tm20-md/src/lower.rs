@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::num::NonZeroU32;
 
 use comrak::nodes::{AstNode, ListDelimType, ListType, NodeValue, TableAlignment};
-use comrak::{parse_document, Arena, Options};
+use comrak::{Arena, Options, parse_document};
 use tm20_set::{
     Code, ColAlign, Cols, Cut, DecimalDelim, DisplaySize, Figure, Frame, GridSkip, Head, ItemMark,
     List, ListFit, ListItem, Mark, MarkAlign, Marker, Measure, Note, Quote, Rule, Sheet, Span,
@@ -115,11 +115,7 @@ where
     L: FnMut(&str) -> Result<Vec<u8>, Error>,
 {
     fn text_size(&self) -> TextSize {
-        if self.in_note {
-            TextSize::Pt8
-        } else {
-            BODY
-        }
+        if self.in_note { TextSize::Pt8 } else { BODY }
     }
 
     fn blocks<'a>(&mut self, node: &'a AstNode<'a>) -> Result<Vec<Frame<'static>>, Error> {
@@ -250,12 +246,12 @@ where
 
     fn paragraph<'a>(&mut self, node: &'a AstNode<'a>) -> Result<Vec<Frame<'static>>, Error> {
         let kids: Vec<_> = node.children().collect();
-        if kids.len() == 1 {
-            if let NodeValue::Image(link) = &kids[0].data.borrow().value {
-                let bytes = (self.load)(link.url.as_ref())?;
-                let fig = Figure::from_image(&bytes, self.measure)?;
-                return Ok(vec![Frame::Figure(fig)]);
-            }
+        if kids.len() == 1
+            && let NodeValue::Image(link) = &kids[0].data.borrow().value
+        {
+            let bytes = (self.load)(link.url.as_ref())?;
+            let fig = Figure::from_image(&bytes, self.measure)?;
+            return Ok(vec![Frame::Figure(fig)]);
         }
         if kids
             .iter()
@@ -322,7 +318,7 @@ where
             }
             rows.push(cells);
         }
-        Ok(Frame::Cols(cols_frame(self.text_size(), align, rows)?))
+        Ok(Frame::Cols(cols_frame(self.text_size(), &align, rows)?))
     }
 
     fn inlines<'a>(
@@ -375,17 +371,17 @@ where
                         Span::Math(_) => "",
                     })
                     .collect();
-                let note = self.note_for_dest(&link.url, &text);
+                let dest_note = self.note_for_dest(&link.url, &text);
                 if inner_spans.is_empty() {
                     inner_spans.push(Span::Type {
                         cut: cut(inner),
                         text: std::borrow::Cow::Owned(String::new()),
-                        note,
+                        note: dest_note,
                     });
-                } else if let Some(n) = note {
-                    if let Span::Type { note, .. } = inner_spans.last_mut().unwrap() {
-                        *note = Some(n);
-                    }
+                } else if let Some(n) = dest_note
+                    && let Some(Span::Type { note, .. }) = inner_spans.last_mut()
+                {
+                    *note = Some(n);
                 }
                 spans.extend(inner_spans);
             }
@@ -461,7 +457,7 @@ fn code_frame(literal: &str, size: TextSize) -> Frame<'static> {
         .split('\n')
         .map(|s| std::borrow::Cow::Owned(s.to_string()))
         .collect();
-    if lines.last().map(|s| s.is_empty()).unwrap_or(false) {
+    if lines.last().is_some_and(|s| s.is_empty()) {
         lines.pop();
     }
     Frame::Code(Code { size, lines })
@@ -512,7 +508,7 @@ fn strip_code(lit: &str) -> &str {
 
 fn cols_frame(
     size: TextSize,
-    align: Vec<ColAlign>,
+    align: &[ColAlign],
     rows: Vec<Vec<Vec<Span<'static>>>>,
 ) -> Result<Cols<'static>, Error> {
     match align.len() {

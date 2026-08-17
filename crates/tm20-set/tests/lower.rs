@@ -2,10 +2,10 @@
 
 mod common;
 
+use tm20::PRINTABLE_DOTS;
 use tm20::command::{CodePage, Command, CutKind};
 use tm20::encode::encode;
-use tm20::PRINTABLE_DOTS;
-use tm20_set::{lower, Cut, Frame, Sheet, TextBlock, TextSize};
+use tm20_set::{Cut, Frame, Sheet, TextBlock, TextSize, lower};
 
 #[test]
 fn lower_is_init_page_graphics_feed_cut() {
@@ -17,9 +17,15 @@ fn lower_is_init_page_graphics_feed_cut() {
     ))]);
     let doc = lower(&sheet, &faces).unwrap();
     match doc.commands() {
-        [Command::Init, Command::CodePage(CodePage::Pc437), Command::Graphics(g), Command::Feed { lines: 3 }, Command::Cut {
-            kind: CutKind::Partial,
-        }] => {
+        [
+            Command::Init,
+            Command::CodePage(CodePage::Pc437),
+            Command::Graphics(g),
+            Command::Feed { lines: 3 },
+            Command::Cut {
+                kind: CutKind::Partial,
+            },
+        ] => {
             assert_eq!(g.width_dots, PRINTABLE_DOTS);
             assert!(g.pixels.iter().any(|&b| b != 0));
         }

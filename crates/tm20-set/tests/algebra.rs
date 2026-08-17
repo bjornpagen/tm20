@@ -2,12 +2,12 @@
 
 mod common;
 
-use tm20::graphics::{width_bytes, Graphics};
 use tm20::PRINTABLE_DOTS;
+use tm20::graphics::{Graphics, width_bytes};
 use tm20_set::{
-    compose, preview_png, pt_dots, Code, ColAlign, Cols, Cut, DisplaySize, Figure, Frame, GridSkip,
-    Head, List, ListFit, ListItem, Mark, MarkAlign, Note, Quote, Rule, Sheet, Span, TextBlock,
-    TextSize, Thickness, Tracking, GRID, HANG, NOTE_RULE, TASK_BOX,
+    Code, ColAlign, Cols, Cut, DisplaySize, Figure, Frame, GRID, GridSkip, HANG, Head, List,
+    ListFit, ListItem, Mark, MarkAlign, NOTE_RULE, Note, Quote, Rule, Sheet, Span, TASK_BOX,
+    TextBlock, TextSize, Thickness, Tracking, compose, preview_png, pt_dots,
 };
 
 fn l11() -> u16 {
@@ -788,7 +788,7 @@ fn task_box_sits_in_the_cap_band() {
         }
     }
     assert!(y1 >= y0, "task box has ink");
-    let center = (y0 + y1) / 2;
+    let center = usize::midpoint(y0, y1);
     let (_, _, _, text_y1) = ink_bbox(&g);
     assert!(
         center < text_y1.saturating_sub(TASK_BOX as usize / 4),

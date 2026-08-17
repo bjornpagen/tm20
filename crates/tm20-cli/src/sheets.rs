@@ -9,8 +9,8 @@ use tm20_set::{
     TextSize, Thickness, Tracking,
 };
 
-use crate::kit::{nhg_table, system_table};
 use crate::Result;
+use crate::kit::{nhg_table, system_table};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Case {
@@ -64,11 +64,11 @@ fn cols<'a>(cut: Cut, item: &'a str, amount: &'a str) -> Cols<'a> {
     )
 }
 
-fn item<'a>(cut: Cut, size: TextSize, text: &'a str) -> Vec<Frame<'a>> {
+fn item(cut: Cut, size: TextSize, text: &str) -> Vec<Frame<'_>> {
     vec![Frame::Text(TextBlock::plain(cut, size, text))]
 }
 
-fn li<'a>(cut: Cut, size: TextSize, text: &'a str) -> ListItem<'a> {
+fn li(cut: Cut, size: TextSize, text: &str) -> ListItem<'_> {
     ListItem::new(item(cut, size, text))
 }
 

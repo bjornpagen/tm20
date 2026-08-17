@@ -6,7 +6,7 @@ use std::num::NonZeroU32;
 
 use crate::error::Error;
 use crate::face::{Cut, FaceTable};
-use crate::leading::{GridSkip, GRID, TASK_BOX};
+use crate::leading::{GRID, GridSkip, TASK_BOX};
 use crate::size::{DisplaySize, TextSize};
 use tm20::PRINTABLE_DOTS;
 
@@ -78,6 +78,7 @@ impl<'a> Span<'a> {
         Self::Math(m)
     }
 
+    #[must_use]
     pub fn noted(self, n: NonZeroU32) -> Self {
         match self {
             Self::Type { cut, text, .. } => Self::Type {
@@ -236,7 +237,7 @@ pub struct List<'a> {
     pub items: Vec<ListItem<'a>>,
 }
 
-impl<'a> List<'a> {
+impl List<'_> {
     /// Marker plus a word space, ceiled to [`GRID`]. Closed so dash, two-digit
     /// decimal, and a task box share a text column at this size.
     pub fn hang_dots(&self, faces: &FaceTable) -> Result<u16, Error> {

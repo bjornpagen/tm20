@@ -9,7 +9,7 @@ use sheets::{catalog, find};
 use tm20::command::Command;
 use tm20::encode::encode;
 use tm20::{Transport, Usb};
-use tm20_set::{preview_png, Measure};
+use tm20_set::{Measure, preview_png};
 
 use crate::kit::system_table;
 
@@ -74,35 +74,32 @@ fn parse_opts() -> Result<Opts> {
 fn run() -> Result<()> {
     let opts = parse_opts()?;
     let mut cmd = opts.args.into_iter();
-    match cmd.next().as_deref() {
-        Some("print") => {
-            let next = cmd.next();
-            if next.as_deref() == Some("md") {
-                let path = cmd.next().ok_or("print md needs a path")?;
-                print_md(&path, &opts.serial, opts.dry, opts.png.as_deref())
-            } else {
-                print_cmd(next, &opts.serial, opts.dry, opts.png.as_deref())
-            }
+    if let Some("print") = cmd.next().as_deref() {
+        let next = cmd.next();
+        if next.as_deref() == Some("md") {
+            let path = cmd.next().ok_or("print md needs a path")?;
+            print_md(&path, opts.serial.as_deref(), opts.dry, opts.png.as_deref())
+        } else {
+            print_cmd(
+                next.as_deref(),
+                opts.serial.as_deref(),
+                opts.dry,
+                opts.png.as_deref(),
+            )
         }
-        _ => {
-            usage();
-            for case in catalog() {
-                eprintln!("  {:<8} {}", case.id, case.title);
-            }
-            Err("unknown command".into())
+    } else {
+        usage();
+        for case in catalog() {
+            eprintln!("  {:<8} {}", case.id, case.title);
         }
+        Err("unknown command".into())
     }
 }
 
-fn print_cmd(
-    id: Option<String>,
-    serial: &Option<String>,
-    dry: bool,
-    png: Option<&str>,
-) -> Result<()> {
-    match id.as_deref() {
+fn print_cmd(id: Option<&str>, serial: Option<&str>, dry: bool, png: Option<&str>) -> Result<()> {
+    match id {
         None | Some("all") => {
-            let ids: Vec<_> = if id.as_deref() == Some("all") {
+            let ids: Vec<_> = if id == Some("all") {
                 catalog().iter().map(|c| c.id).collect()
             } else {
                 usage();
@@ -119,7 +116,7 @@ fn print_cmd(
                 }
                 return Ok(());
             }
-            let mut usb = Usb::open(serial.as_deref())?;
+            let mut usb = Usb::open(serial)?;
             for id in ids {
                 let case = find(id).unwrap();
                 eprintln!("{}: {}", case.id, case.title);
@@ -139,17 +136,17 @@ fn print_cmd(
                 return Ok(());
             }
             write_png(png, id, &doc)?;
-            Usb::open(serial.as_deref())?.write(&bytes)?;
+            Usb::open(serial)?.write(&bytes)?;
             Ok(())
         }
     }
 }
 
-fn print_md(path: &str, serial: &Option<String>, dry: bool, png: Option<&str>) -> Result<()> {
+fn print_md(path: &str, serial: Option<&str>, dry: bool, png: Option<&str>) -> Result<()> {
     let path = Path::new(path);
     if path.is_dir() {
         let mut files: Vec<_> = std::fs::read_dir(path)?
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
             .map(|e| e.path())
             .filter(|p| p.extension().is_some_and(|ext| ext == "md"))
             .collect();
@@ -164,7 +161,7 @@ fn print_md(path: &str, serial: &Option<String>, dry: bool, png: Option<&str>) -
             }
             return Ok(());
         }
-        let mut usb = Usb::open(serial.as_deref())?;
+        let mut usb = Usb::open(serial)?;
         for f in &files {
             eprintln!("md: {}", f.display());
             let (bytes, doc) = md_job(f)?;
@@ -182,7 +179,7 @@ fn print_md(path: &str, serial: &Option<String>, dry: bool, png: Option<&str>) -
     }
     let name = path.file_stem().unwrap().to_string_lossy();
     write_png(png, &name, &doc)?;
-    Usb::open(serial.as_deref())?.write(&bytes)?;
+    Usb::open(serial)?.write(&bytes)?;
     Ok(())
 }
 

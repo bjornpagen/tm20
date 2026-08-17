@@ -128,7 +128,7 @@ impl Face {
             .ascent
     }
 
-    fn shape(&self, text: &str, px: f32, kind: ShapeKind, tracking: f32) -> Shaped {
+    fn shape(&self, text: &str, px: f32, kind: &ShapeKind, tracking: f32) -> Shaped {
         if text.is_empty() {
             return Shaped {
                 glyphs: Vec::new(),
@@ -181,11 +181,11 @@ impl TextFace {
     }
 
     pub(crate) fn shape(&self, text: &str, size: TextSize) -> Shaped {
-        self.0.shape(text, Self::px(size), ShapeKind::Run, 0.0)
+        self.0.shape(text, Self::px(size), &ShapeKind::Run, 0.0)
     }
 
     pub(crate) fn shape_figure(&self, text: &str, size: TextSize) -> Shaped {
-        self.0.shape(text, Self::px(size), ShapeKind::Figure, 0.0)
+        self.0.shape(text, Self::px(size), &ShapeKind::Figure, 0.0)
     }
 
     pub(crate) fn inner(&self) -> &Face {
@@ -205,7 +205,7 @@ impl DisplayFace {
     pub(crate) fn shape(&self, text: &str, size: DisplaySize, tracking_em: i16) -> Shaped {
         let px = Self::px(size);
         let tracking = px * tracking_em as f32 / 1000.0;
-        self.0.shape(text, px, ShapeKind::Mark, tracking)
+        self.0.shape(text, px, &ShapeKind::Mark, tracking)
     }
 
     pub(crate) fn inner(&self) -> &Face {
@@ -225,7 +225,7 @@ pub(crate) struct Shaped {
     pub ascent: f32,
 }
 
-fn ot_features(kind: ShapeKind) -> Vec<Feature> {
+fn ot_features(kind: &ShapeKind) -> Vec<Feature> {
     let mut f = vec![
         Feature::new(Tag::new(b"kern"), 1, ..),
         Feature::new(Tag::new(b"liga"), 1, ..),

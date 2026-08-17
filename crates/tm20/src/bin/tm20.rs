@@ -3,11 +3,11 @@ use std::io;
 use std::process::ExitCode;
 use std::time::Instant;
 
-use tm20::identify::{encode_process_id, parse_process_id, query_info, InfoRequest};
-use tm20::status::{encode_recover, encode_request, parse_status, StatusRequest};
+use tm20::identify::{InfoRequest, encode_process_id, parse_process_id, query_info};
+use tm20::status::{StatusRequest, encode_recover, encode_request, parse_status};
 use tm20::usb::WAIT_TIMEOUT;
 use tm20::{
-    catalog, ean13_page, encode, find_case, hello, qr_page, ruler, text_page, Transport, Usb,
+    Transport, Usb, catalog, ean13_page, encode, find_case, hello, qr_page, ruler, text_page,
 };
 
 const PROCESS_ID: [u8; 4] = *b"tm20";
@@ -85,39 +85,64 @@ fn run() -> tm20::Result<()> {
             }
             Ok(())
         }
-        Some("hello") => emit(&opts.serial, opts.dry, opts.wait, &encode(&hello())?),
+        Some("hello") => emit(
+            opts.serial.as_deref(),
+            opts.dry,
+            opts.wait,
+            &encode(&hello())?,
+        ),
         Some("text") => {
             let text = cmd.next().unwrap_or_default();
             emit(
-                &opts.serial,
+                opts.serial.as_deref(),
                 opts.dry,
                 opts.wait,
                 &encode(&text_page(&text))?,
             )
         }
-        Some("ruler") => emit(&opts.serial, opts.dry, opts.wait, &encode(&ruler())?),
+        Some("ruler") => emit(
+            opts.serial.as_deref(),
+            opts.dry,
+            opts.wait,
+            &encode(&ruler())?,
+        ),
         Some("status") => status(opts.serial.as_deref()),
         Some("debug") => debug(opts.serial.as_deref()),
         Some("id") => identify(opts.serial.as_deref()),
-        Some("recover") => emit(&opts.serial, opts.dry, opts.wait, &encode_recover()),
+        Some("recover") => emit(
+            opts.serial.as_deref(),
+            opts.dry,
+            opts.wait,
+            &encode_recover(),
+        ),
         Some("qr") => {
             let data = cmd
                 .next()
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "qr needs data"))?;
-            emit(&opts.serial, opts.dry, opts.wait, &encode(&qr_page(&data))?)
+            emit(
+                opts.serial.as_deref(),
+                opts.dry,
+                opts.wait,
+                &encode(&qr_page(&data))?,
+            )
         }
         Some("ean13") => {
             let digits = cmd
                 .next()
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "ean13 needs digits"))?;
             emit(
-                &opts.serial,
+                opts.serial.as_deref(),
                 opts.dry,
                 opts.wait,
                 &encode(&ean13_page(&digits))?,
             )
         }
-        Some("test") => test_cmd(cmd.next(), &opts.serial, opts.dry, opts.wait),
+        Some("test") => test_cmd(
+            cmd.next().as_deref(),
+            opts.serial.as_deref(),
+            opts.dry,
+            opts.wait,
+        ),
         _ => {
             usage();
             Err(io::Error::new(io::ErrorKind::InvalidInput, "unknown command").into())
@@ -125,13 +150,8 @@ fn run() -> tm20::Result<()> {
     }
 }
 
-fn test_cmd(
-    id: Option<String>,
-    serial: &Option<String>,
-    dry: bool,
-    wait: bool,
-) -> tm20::Result<()> {
-    match id.as_deref() {
+fn test_cmd(id: Option<&str>, serial: Option<&str>, dry: bool, wait: bool) -> tm20::Result<()> {
+    match id {
         None => {
             println!("id          in-all  what to look for");
             for case in catalog() {
@@ -155,7 +175,7 @@ fn test_cmd(
                 }
                 return Ok(());
             }
-            let mut usb = Usb::open(serial.as_deref())?;
+            let mut usb = Usb::open(serial)?;
             for case in catalog().iter().filter(|c| c.in_all) {
                 eprintln!("printing {} ({})", case.id, case.expect);
                 usb.write(&encode(&case.doc())?)?;
@@ -183,8 +203,7 @@ fn debug(serial: Option<&str>) -> tm20::Result<()> {
         t0.elapsed().as_millis(),
         usb.bulk_out(),
         usb.bulk_in()
-            .map(|a| format!("{a:#04x}"))
-            .unwrap_or_else(|| "none".into())
+            .map_or_else(|| "none".into(), |a| format!("{a:#04x}"))
     );
     let p = usb.port_status()?;
     println!(
@@ -264,7 +283,7 @@ fn wait_done(usb: &mut Usb) -> tm20::Result<()> {
     Ok(())
 }
 
-fn emit(serial: &Option<String>, dry: bool, wait: bool, bytes: &[u8]) -> tm20::Result<()> {
+fn emit(serial: Option<&str>, dry: bool, wait: bool, bytes: &[u8]) -> tm20::Result<()> {
     if dry {
         dump_hex(bytes);
         if wait {
@@ -272,7 +291,7 @@ fn emit(serial: &Option<String>, dry: bool, wait: bool, bytes: &[u8]) -> tm20::R
         }
         return Ok(());
     }
-    let mut usb = Usb::open(serial.as_deref())?;
+    let mut usb = Usb::open(serial)?;
     usb.write(bytes)?;
     if wait {
         wait_done(&mut usb)?;

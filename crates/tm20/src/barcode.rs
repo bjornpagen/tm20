@@ -153,14 +153,14 @@ pub fn validate(kind: BarcodeKind, data: &str) -> Result<(), EncodeError> {
         }
         BarcodeKind::Ean13 => digits && matches!(len, 12 | 13),
         BarcodeKind::Ean8 => digits && matches!(len, 7 | 8),
-        BarcodeKind::Itf => digits && len >= 2 && len % 2 == 0,
+        BarcodeKind::Itf => digits && len >= 2 && len.is_multiple_of(2),
         BarcodeKind::Code39 => len >= 1 && data.chars().all(|c| CODE39_VALID.contains(&c)),
         BarcodeKind::Codabar => len >= 2 && data.chars().all(|c| CODABAR_VALID.contains(&c)),
         BarcodeKind::Code93 => {
             (1..=255).contains(&len) && data.chars().all(|c| CODE93_VALID.contains(&c))
         }
         BarcodeKind::Code128 { set: Code128Set::C } => {
-            digits && (1..=253).contains(&len) && len % 2 == 0
+            digits && (1..=253).contains(&len) && len.is_multiple_of(2)
         }
         BarcodeKind::Code128 { .. } => (1..=253).contains(&len) && data.is_ascii(),
         BarcodeKind::Gs1_128 => (2..=255).contains(&len) && data.is_ascii(),

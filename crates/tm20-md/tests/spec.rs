@@ -1,6 +1,6 @@
 //! Lowering proofs. One markdown snippet per spec subsection. Not HTML goldens.
 
-use tm20_md::{sheet, Error};
+use tm20_md::{Error, sheet};
 use tm20_set::{
     ColAlign, ColBody, Cut, DecimalDelim, Frame, ItemMark, ListFit, Marker, Measure, Note, Span,
     TextSize, Thickness,
@@ -17,7 +17,7 @@ fn parse_err(md: &str) -> Error {
     }
 }
 
-fn span_cut<'a>(s: &'a Span<'_>) -> Cut {
+fn span_cut(s: &Span<'_>) -> Cut {
     match s {
         Span::Type { cut, .. } => *cut,
         Span::Math(_) => panic!("math"),
@@ -33,7 +33,7 @@ fn span_text<'a>(s: &'a Span<'_>) -> &'a str {
 
 fn span_note(s: &Span<'_>) -> Option<u32> {
     match s {
-        Span::Type { note, .. } => note.map(|n| n.get()),
+        Span::Type { note, .. } => note.map(std::num::NonZero::get),
         Span::Math(_) => None,
     }
 }
@@ -184,7 +184,7 @@ fn bullet_and_ordered_lists() {
                 assert_eq!(start, 3);
                 assert_eq!(delim, DecimalDelim::Paren);
             }
-            _ => panic!("decimal"),
+            Marker::Dash => panic!("decimal"),
         },
         _ => panic!("list"),
     }
@@ -241,10 +241,12 @@ fn nested_list_item_blocks() {
     let s = parse("- outer\n  - inner");
     match &s.frames[0] {
         Frame::List(l) => {
-            assert!(l.items[0]
-                .frames
-                .iter()
-                .any(|f| matches!(f, Frame::List(_))));
+            assert!(
+                l.items[0]
+                    .frames
+                    .iter()
+                    .any(|f| matches!(f, Frame::List(_)))
+            );
         }
         _ => panic!("list"),
     }
@@ -260,13 +262,15 @@ fn list_nest_cap() {
 fn emphasis_and_strong() {
     let s = parse("a *i* and **b** and ***both***");
     let runs = text_runs(&s);
-    assert!(runs
-        .iter()
-        .any(|(c, t)| *c == Cut::Italic && t.contains('i')));
+    assert!(
+        runs.iter()
+            .any(|(c, t)| *c == Cut::Italic && t.contains('i'))
+    );
     assert!(runs.iter().any(|(c, t)| *c == Cut::Bold && t.contains('b')));
-    assert!(runs
-        .iter()
-        .any(|(c, t)| *c == Cut::BoldItalic && t.contains("both")));
+    assert!(
+        runs.iter()
+            .any(|(c, t)| *c == Cut::BoldItalic && t.contains("both"))
+    );
 }
 
 #[test]
@@ -386,10 +390,11 @@ fn bare_autolink_is_italic_without_a_note() {
     match &s.frames[0] {
         Frame::Text(b) => {
             assert!(b.spans.iter().all(|sp| span_note(sp).is_none()));
-            assert!(b
-                .spans
-                .iter()
-                .any(|sp| span_cut(sp) == Cut::Italic && span_text(sp).contains("example.com")));
+            assert!(
+                b.spans
+                    .iter()
+                    .any(|sp| span_cut(sp) == Cut::Italic && span_text(sp).contains("example.com"))
+            );
         }
         _ => panic!("text"),
     }
@@ -486,7 +491,7 @@ fn inline_math_is_a_raster_box() {
                     assert!(m.width > 0 && m.height > 0);
                     assert!(m.ascent <= m.height);
                 }
-                _ => panic!("inline math"),
+                Span::Type { .. } => panic!("inline math"),
             }
             assert_eq!(span_text(&b.spans[2]), " now");
         }

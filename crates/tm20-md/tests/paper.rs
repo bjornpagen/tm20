@@ -7,8 +7,8 @@ use font_kit::handle::Handle;
 use font_kit::properties::{Properties, Style as KitStyle, Weight as KitWeight};
 use font_kit::source::SystemSource;
 use tm20::encode::encode;
-use tm20_md::{sheet, Error};
-use tm20_set::{compose, preview_png, Cut, Face, FaceTable, Measure};
+use tm20_md::{Error, sheet};
+use tm20_set::{Cut, Face, FaceTable, Measure, compose, preview_png};
 
 fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures")

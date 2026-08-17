@@ -16,13 +16,13 @@ pub use compose::compose;
 pub use error::Error;
 pub use face::{Cut, DisplayFace, Face, FaceTable, TextFace};
 pub use frame::{
-    Code, ColAlign, ColBody, Cols, DecimalDelim, Figure, Frame, Head, ItemMark, List, ListFit,
-    ListItem, Mark, MarkAlign, Marker, Math, Measure, Note, Quote, Rule, Sheet, Span, TextBlock,
-    Thickness, Tracking, EN_DASH,
+    Code, ColAlign, ColBody, Cols, DecimalDelim, EN_DASH, Figure, Frame, Head, ItemMark, List,
+    ListFit, ListItem, Mark, MarkAlign, Marker, Math, Measure, Note, Quote, Rule, Sheet, Span,
+    TextBlock, Thickness, Tracking,
 };
-pub use leading::{pt_dots, GridSkip, Leading, GRID, HANG, NOTE_RULE, TASK_BOX};
+pub use leading::{GRID, GridSkip, HANG, Leading, NOTE_RULE, TASK_BOX, pt_dots};
 pub use lower::lower;
 pub use preview::preview_png;
-pub use size::{DisplaySize, TextSize, DPI};
+pub use size::{DPI, DisplaySize, TextSize};
 
 pub type Result<T> = std::result::Result<T, Error>;

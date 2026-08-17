@@ -29,14 +29,14 @@ pub use command::{
 pub use document::Document;
 pub use encode::encode;
 pub use error::{EncodeError, Error, IdentifyError, Result, StatusError, UsbError};
-pub use graphics::{pack, Graphics, GraphicsScale};
+pub use graphics::{Graphics, GraphicsScale, pack};
 pub use host::{ean13_page, hello, qr_page, rule, ruler, text_page};
-pub use identify::{encode_info, encode_process_id, parse_process_id, query_info, InfoRequest};
+pub use identify::{InfoRequest, encode_info, encode_process_id, parse_process_id, query_info};
 pub use memory::Memory;
 pub use net::Tcp;
-pub use selftest::{catalog, find as find_case, Case as TestCase};
+pub use selftest::{Case as TestCase, catalog, find as find_case};
 pub use serial::Serial;
-pub use status::{parse_status, Status, StatusRequest};
+pub use status::{Status, StatusRequest, parse_status};
 pub use symbol::{
     DataMatrix, DataMatrixType, Gs1DataBar, Gs1DataBarType, Gs1DataBarWidth, MaxiCode,
     MaxiCodeMode, Pdf417, Pdf417Ecc, Pdf417Kind, Qr, QrEcc, QrModel,
