@@ -1,7 +1,10 @@
 //! Lowering proofs. One markdown snippet per spec subsection. Not HTML goldens.
 
 use tm20_md::{sheet, Error};
-use tm20_set::{ColAlign, Cut, DecimalDelim, Frame, Marker, Measure, Note, TextSize, Thickness};
+use tm20_set::{
+    ColAlign, ColBody, Cut, DecimalDelim, Frame, ItemMark, ListFit, Marker, Measure, Note, Span,
+    TextSize, Thickness,
+};
 
 fn parse(md: &str) -> tm20_set::Sheet<'static> {
     sheet(md, Measure::TAPE, |_| Err(Error::Image)).unwrap()
@@ -14,12 +17,33 @@ fn parse_err(md: &str) -> Error {
     }
 }
 
+fn span_cut<'a>(s: &'a Span<'_>) -> Cut {
+    match s {
+        Span::Type { cut, .. } => *cut,
+        Span::Math(_) => panic!("math"),
+    }
+}
+
+fn span_text<'a>(s: &'a Span<'_>) -> &'a str {
+    match s {
+        Span::Type { text, .. } => text,
+        Span::Math(_) => "",
+    }
+}
+
+fn span_note(s: &Span<'_>) -> Option<u32> {
+    match s {
+        Span::Type { note, .. } => note.map(|n| n.get()),
+        Span::Math(_) => None,
+    }
+}
+
 fn text_runs(sheet: &tm20_set::Sheet<'_>) -> Vec<(Cut, String)> {
     match &sheet.frames[..] {
         [Frame::Text(b)] => b
             .spans
             .iter()
-            .map(|s| (s.cut, s.text.as_ref().to_string()))
+            .map(|s| (span_cut(s), span_text(s).to_string()))
             .collect(),
         other => panic!("expected one Text, got {} frames", other.len()),
     }
@@ -148,7 +172,7 @@ fn bullet_and_ordered_lists() {
     match &dash.frames[0] {
         Frame::List(l) => {
             assert!(matches!(l.marker, Marker::Dash));
-            assert!(l.tight);
+            assert_eq!(l.fit, ListFit::Tight);
             assert_eq!(l.items.len(), 2);
         }
         _ => panic!("list"),
@@ -171,7 +195,7 @@ fn loose_list() {
     let s = parse("- a\n\n- b");
     match &s.frames[0] {
         Frame::List(l) => {
-            assert!(!l.tight);
+            assert_eq!(l.fit, ListFit::Loose);
             assert_eq!(l.items.len(), 2);
         }
         _ => panic!("list"),
@@ -184,7 +208,7 @@ fn blank_between_same_type_items_is_one_loose_list() {
     assert_eq!(s.frames.len(), 1, "same-type items do not start a new list");
     match &s.frames[0] {
         Frame::List(l) => {
-            assert!(!l.tight);
+            assert_eq!(l.fit, ListFit::Loose);
             assert_eq!(l.items.len(), 3);
         }
         _ => panic!("list"),
@@ -197,7 +221,7 @@ fn a_paragraph_breaks_lists() {
     assert_eq!(s.frames.len(), 3);
     match &s.frames[0] {
         Frame::List(l) => {
-            assert!(l.tight);
+            assert_eq!(l.fit, ListFit::Tight);
             assert_eq!(l.items.len(), 2);
         }
         _ => panic!("first list"),
@@ -205,7 +229,7 @@ fn a_paragraph_breaks_lists() {
     assert!(matches!(&s.frames[1], Frame::Text(_)));
     match &s.frames[2] {
         Frame::List(l) => {
-            assert!(!l.tight);
+            assert_eq!(l.fit, ListFit::Loose);
             assert_eq!(l.items.len(), 2);
         }
         _ => panic!("second list"),
@@ -255,7 +279,7 @@ fn link_is_italic_with_a_note() {
         .unwrap();
     match &s.frames[0] {
         Frame::Text(b) => {
-            assert!(b.spans.iter().any(|sp| sp.note.map(|n| n.get()) == Some(1)));
+            assert!(b.spans.iter().any(|sp| span_note(sp) == Some(1)));
         }
         _ => panic!("text"),
     }
@@ -269,11 +293,7 @@ fn same_destination_reuses_the_number() {
     let s = parse("[a](/x) then [b](/x)");
     match &s.frames[0] {
         Frame::Text(b) => {
-            let nums: Vec<_> = b
-                .spans
-                .iter()
-                .filter_map(|sp| sp.note.map(|n| n.get()))
-                .collect();
+            let nums: Vec<_> = b.spans.iter().filter_map(|sp| span_note(sp)).collect();
             assert_eq!(nums, vec![1, 1]);
         }
         _ => panic!("text"),
@@ -286,8 +306,8 @@ fn autolink_has_no_note() {
     let s = parse("See <https://example.com>.");
     match &s.frames[0] {
         Frame::Text(b) => {
-            assert!(b.spans.iter().all(|sp| sp.note.is_none()));
-            assert!(b.spans.iter().any(|sp| sp.cut == Cut::Italic));
+            assert!(b.spans.iter().all(|sp| span_note(sp).is_none()));
+            assert!(b.spans.iter().any(|sp| span_cut(sp) == Cut::Italic));
         }
         _ => panic!("text"),
     }
@@ -299,7 +319,7 @@ fn hard_and_soft_breaks() {
     let hard = parse("a  \nb");
     match &hard.frames[0] {
         Frame::Text(b) => {
-            let t: String = b.spans.iter().map(|s| s.text.as_ref()).collect();
+            let t: String = b.spans.iter().map(|s| span_text(s)).collect();
             assert!(t.contains('\n'), "{t:?}");
         }
         _ => panic!("text"),
@@ -307,7 +327,7 @@ fn hard_and_soft_breaks() {
     let soft = parse("a\nb");
     match &soft.frames[0] {
         Frame::Text(b) => {
-            let t: String = b.spans.iter().map(|s| s.text.as_ref()).collect();
+            let t: String = b.spans.iter().map(|s| span_text(s)).collect();
             assert!(!t.contains('\n'));
             assert!(t.contains(' '));
         }
@@ -335,9 +355,14 @@ fn pipe_table() {
     let s = parse("| a | b |\n| :---: | ---: |\n| 1 | 2 |\n");
     match &s.frames[0] {
         Frame::Cols(c) => {
-            assert_eq!(c.align, vec![ColAlign::Start, ColAlign::End]);
-            assert_eq!(c.rows.len(), 2);
-            assert_eq!(c.rows[0][0][0].cut, Cut::Bold);
+            match &c.body {
+                ColBody::Two { align, rows } => {
+                    assert_eq!(align, &[ColAlign::Start, ColAlign::End]);
+                    assert_eq!(rows.len(), 2);
+                    assert_eq!(span_cut(&rows[0][0][0]), Cut::Bold);
+                }
+                ColBody::Three { .. } => panic!("two"),
+            }
             assert_eq!(c.size, TextSize::Pt11);
         }
         _ => panic!("cols"),
@@ -360,11 +385,11 @@ fn bare_autolink_is_italic_without_a_note() {
     let s = parse("See https://example.com now.");
     match &s.frames[0] {
         Frame::Text(b) => {
-            assert!(b.spans.iter().all(|sp| sp.note.is_none()));
+            assert!(b.spans.iter().all(|sp| span_note(sp).is_none()));
             assert!(b
                 .spans
                 .iter()
-                .any(|sp| sp.cut == Cut::Italic && sp.text.contains("example.com")));
+                .any(|sp| span_cut(sp) == Cut::Italic && span_text(sp).contains("example.com")));
         }
         _ => panic!("text"),
     }
@@ -376,8 +401,8 @@ fn task_list_items() {
     let s = parse("- [ ] foo\n- [x] bar\n");
     match &s.frames[0] {
         Frame::List(l) => {
-            assert_eq!(l.items[0].task, Some(false));
-            assert_eq!(l.items[1].task, Some(true));
+            assert_eq!(l.items[0].mark, ItemMark::Task { checked: false });
+            assert_eq!(l.items[1].mark, ItemMark::Task { checked: true });
         }
         _ => panic!("list"),
     }
@@ -388,8 +413,8 @@ fn nested_task_list() {
     let s = parse("- [x] foo\n  - [ ] bar\n  - [x] baz\n- [ ] bim\n");
     match &s.frames[0] {
         Frame::List(l) => {
-            assert_eq!(l.items[0].task, Some(true));
-            assert_eq!(l.items[1].task, Some(false));
+            assert_eq!(l.items[0].mark, ItemMark::Task { checked: true });
+            assert_eq!(l.items[1].mark, ItemMark::Task { checked: false });
             let inner = l.items[0]
                 .frames
                 .iter()
@@ -398,8 +423,8 @@ fn nested_task_list() {
                     _ => None,
                 })
                 .expect("nested");
-            assert_eq!(inner.items[0].task, Some(false));
-            assert_eq!(inner.items[1].task, Some(true));
+            assert_eq!(inner.items[0].mark, ItemMark::Task { checked: false });
+            assert_eq!(inner.items[1].mark, ItemMark::Task { checked: true });
         }
         _ => panic!("list"),
     }
@@ -410,11 +435,7 @@ fn footnotes_share_the_link_registry() {
     let s = parse("See [canon](https://example.com) and a note.[^x]\n\n[^x]: Ruder.\n");
     match &s.frames[0] {
         Frame::Text(b) => {
-            let nums: Vec<_> = b
-                .spans
-                .iter()
-                .filter_map(|sp| sp.note.map(|n| n.get()))
-                .collect();
+            let nums: Vec<_> = b.spans.iter().filter_map(|sp| span_note(sp)).collect();
             assert_eq!(nums, vec![1, 2]);
         }
         _ => panic!("text"),
@@ -429,11 +450,7 @@ fn footnote_reuses_the_number() {
     let s = parse("A[^x] then B[^x].\n\n[^x]: Once.\n");
     match &s.frames[0] {
         Frame::Text(b) => {
-            let nums: Vec<_> = b
-                .spans
-                .iter()
-                .filter_map(|sp| sp.note.map(|n| n.get()))
-                .collect();
+            let nums: Vec<_> = b.spans.iter().filter_map(|sp| span_note(sp)).collect();
             assert_eq!(nums, vec![1, 1]);
         }
         _ => panic!("text"),
@@ -445,9 +462,73 @@ fn footnote_reuses_the_number() {
 fn undefined_footnote_stays_literal() {
     let s = parse("Hi[^missing].");
     let t: String = match &s.frames[0] {
-        Frame::Text(b) => b.spans.iter().map(|sp| sp.text.as_ref()).collect(),
+        Frame::Text(b) => b.spans.iter().map(span_text).collect(),
         _ => panic!("text"),
     };
     assert!(t.contains("[^missing]"), "{t:?}");
     assert!(s.notes.is_empty());
+}
+
+#[test]
+fn inline_math_is_a_raster_box() {
+    let s = parse("see \\(1+2\\) now");
+    match &s.frames[..] {
+        [Frame::Text(b)] => {
+            assert_eq!(
+                b.spans.len(),
+                3,
+                "{:?}",
+                b.spans.iter().map(|s| span_text(s)).collect::<Vec<_>>()
+            );
+            assert_eq!(span_text(&b.spans[0]), "see ");
+            match &b.spans[1] {
+                Span::Math(m) => {
+                    assert!(m.width > 0 && m.height > 0);
+                    assert!(m.ascent <= m.height);
+                }
+                _ => panic!("inline math"),
+            }
+            assert_eq!(span_text(&b.spans[2]), " now");
+        }
+        other => panic!("expected one Text, got {} frames", other.len()),
+    }
+}
+
+#[test]
+fn display_math_breaks_the_paragraph() {
+    let s = parse("see \\[x+y\\] then");
+    assert_eq!(s.frames.len(), 3, "text, display, text");
+    match &s.frames[0] {
+        Frame::Text(b) => assert_eq!(span_text(&b.spans[0]), "see "),
+        _ => panic!("lead"),
+    }
+    match &s.frames[1] {
+        Frame::Math(m) => {
+            assert!(m.width > 0 && m.width < 576);
+        }
+        _ => panic!("display"),
+    }
+    match &s.frames[2] {
+        Frame::Text(b) => assert_eq!(span_text(&b.spans[0]), " then"),
+        _ => panic!("trail"),
+    }
+}
+
+#[test]
+fn dollars_are_currency() {
+    let s = parse("espresso is $4.50");
+    assert_eq!(
+        text_runs(&s),
+        vec![(Cut::Roman, "espresso is $4.50".into())]
+    );
+}
+
+#[test]
+fn bad_latex_is_an_error() {
+    assert!(matches!(parse_err("\\(\\frac{\\)"), Error::Math));
+}
+
+#[test]
+fn math_in_a_heading_is_an_error() {
+    assert!(matches!(parse_err("# \\(x\\)"), Error::Math));
 }

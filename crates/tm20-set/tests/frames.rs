@@ -4,8 +4,8 @@ mod common;
 
 use tm20::encode::encode;
 use tm20_set::{
-    lower, Code, Cut, DisplaySize, Figure, Frame, Head, Mark, MarkAlign, Quote, Rule, Sheet, Span,
-    TextBlock, TextSize, Thickness, Tracking,
+    lower, Code, Cut, DisplaySize, Figure, Frame, Head, Mark, MarkAlign, Math, Quote, Rule, Sheet,
+    Span, TextBlock, TextSize, Thickness, Tracking,
 };
 
 fn cover(frame: &Frame<'_>) {
@@ -18,6 +18,7 @@ fn cover(frame: &Frame<'_>) {
         | Frame::Quote(_)
         | Frame::Code(_)
         | Frame::Figure(_)
+        | Frame::Math(_)
         | Frame::Rule(_) => {}
     }
 }
@@ -56,6 +57,7 @@ fn kinds() -> Vec<Frame<'static>> {
             lines: vec!["fn measure() -> u16 { 576 }".into()],
         }),
         Frame::Figure(Figure::from_bits(8, 8, vec![true; 64]).unwrap()),
+        Frame::Math(Math::from_bits(8, 8, vec![true; 64], 6).unwrap()),
         Frame::Rule(Rule {
             thickness: Thickness::Two,
         }),
@@ -66,7 +68,7 @@ fn kinds() -> Vec<Frame<'static>> {
 fn every_frame_kind_encodes() {
     let faces = common::table();
     let frames = kinds();
-    assert_eq!(frames.len(), 9);
+    assert_eq!(frames.len(), 10);
     for frame in frames {
         cover(&frame);
         encode(&lower(&Sheet::tape(vec![frame]), &faces).unwrap()).unwrap();

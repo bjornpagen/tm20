@@ -7,8 +7,8 @@ use font_kit::handle::Handle;
 use font_kit::properties::{Properties, Style as KitStyle, Weight as KitWeight};
 use font_kit::source::SystemSource;
 use tm20_set::{
-    ColAlign, Cols, Cut, DecimalDelim, Face, FaceTable, Frame, GridSkip, List, ListItem, Marker,
-    Span, TextBlock, TextSize,
+    ColAlign, Cols, Cut, DecimalDelim, Face, FaceTable, Frame, GridSkip, List, ListFit, ListItem,
+    Marker, Span, TextBlock, TextSize,
 };
 
 pub fn table() -> FaceTable {
@@ -62,15 +62,12 @@ pub fn commit_mono() -> Face {
 
 #[allow(dead_code)]
 pub fn cols<'a>(cut: Cut, item: &'a str, amount: &'a str) -> Cols<'a> {
-    Cols {
-        size: TextSize::Pt11,
-        gutter: GridSkip::ONE,
-        align: vec![ColAlign::Start, ColAlign::End],
-        rows: vec![vec![
-            vec![Span::new(cut, item)],
-            vec![Span::new(cut, amount)],
-        ]],
-    }
+    Cols::two(
+        TextSize::Pt11,
+        GridSkip::ONE,
+        [ColAlign::Start, ColAlign::End],
+        vec![[vec![Span::new(cut, item)], vec![Span::new(cut, amount)]]],
+    )
 }
 
 #[allow(dead_code)]
@@ -93,7 +90,7 @@ pub fn dash_list<'a>(items: Vec<ListItem<'a>>) -> List<'a> {
         size: TextSize::Pt11,
         cut: Cut::Roman,
         marker: Marker::Dash,
-        tight: true,
+        fit: ListFit::Tight,
         items,
     }
 }
@@ -107,7 +104,7 @@ pub fn decimal_list<'a>(start: u32, items: Vec<ListItem<'a>>) -> List<'a> {
             start,
             delim: DecimalDelim::Period,
         },
-        tight: true,
+        fit: ListFit::Tight,
         items,
     }
 }

@@ -6,8 +6,8 @@ use tm20::graphics::{width_bytes, Graphics};
 use tm20::PRINTABLE_DOTS;
 use tm20_set::{
     compose, preview_png, pt_dots, Code, ColAlign, Cols, Cut, DisplaySize, Figure, Frame, GridSkip,
-    Head, List, ListItem, Mark, MarkAlign, Note, Quote, Rule, Sheet, Span, TextBlock, TextSize,
-    Thickness, Tracking, GRID, HANG, NOTE_RULE, TASK_BOX,
+    Head, List, ListFit, ListItem, Mark, MarkAlign, Note, Quote, Rule, Sheet, Span, TextBlock,
+    TextSize, Thickness, Tracking, GRID, HANG, NOTE_RULE, TASK_BOX,
 };
 
 fn l11() -> u16 {
@@ -484,21 +484,21 @@ fn consecutive_cols_are_tight() {
     )
     .unwrap();
     let stacked = compose(
-        &Sheet::tape(vec![Frame::Cols(Cols {
-            size: TextSize::Pt11,
-            gutter: GridSkip::ONE,
-            align: vec![ColAlign::Start, ColAlign::End],
-            rows: vec![
-                vec![
+        &Sheet::tape(vec![Frame::Cols(Cols::two(
+            TextSize::Pt11,
+            GridSkip::ONE,
+            [ColAlign::Start, ColAlign::End],
+            vec![
+                [
                     vec![Span::new(Cut::Roman, "A")],
                     vec![Span::new(Cut::Roman, "$1")],
                 ],
-                vec![
+                [
                     vec![Span::new(Cut::Roman, "B")],
                     vec![Span::new(Cut::Roman, "$2")],
                 ],
             ],
-        })]),
+        ))]),
         &faces,
     )
     .unwrap();
@@ -535,68 +535,20 @@ fn cols_wrap_the_start_column() {
 fn three_columns_compose() {
     let faces = common::table();
     let g = compose(
-        &Sheet::tape(vec![Frame::Cols(Cols {
-            size: TextSize::Pt11,
-            gutter: GridSkip::ONE,
-            align: vec![ColAlign::Start, ColAlign::Start, ColAlign::End],
-            rows: vec![vec![
+        &Sheet::tape(vec![Frame::Cols(Cols::three(
+            TextSize::Pt11,
+            GridSkip::ONE,
+            [ColAlign::Start, ColAlign::Start, ColAlign::End],
+            vec![[
                 vec![Span::new(Cut::Roman, "A")],
                 vec![Span::new(Cut::Roman, "B")],
                 vec![Span::new(Cut::Roman, "$1")],
             ]],
-        })]),
+        ))]),
         &faces,
     )
     .unwrap();
     assert!(g.pixels.iter().any(|&b| b != 0));
-}
-
-#[test]
-fn cols_rejects_illegal_shape() {
-    let faces = common::table();
-    let bad = |align: Vec<ColAlign>, rows: Vec<Vec<Vec<Span>>>| {
-        compose(
-            &Sheet::tape(vec![Frame::Cols(Cols {
-                size: TextSize::Pt11,
-                gutter: GridSkip::ONE,
-                align,
-                rows,
-            })]),
-            &faces,
-        )
-        .unwrap_err()
-    };
-    assert!(matches!(
-        bad(
-            vec![ColAlign::Start],
-            vec![vec![vec![Span::new(Cut::Roman, "H")]]]
-        ),
-        tm20_set::Error::Cols
-    ));
-    assert!(matches!(
-        bad(
-            vec![
-                ColAlign::Start,
-                ColAlign::Start,
-                ColAlign::Start,
-                ColAlign::End
-            ],
-            vec![vec![
-                vec![Span::new(Cut::Roman, "A")],
-                vec![Span::new(Cut::Roman, "B")],
-                vec![Span::new(Cut::Roman, "C")],
-                vec![Span::new(Cut::Roman, "D")],
-            ]]
-        ),
-        tm20_set::Error::Cols
-    ));
-    assert!(matches!(
-        bad(
-            vec![ColAlign::Start, ColAlign::End],
-            vec![vec![vec![Span::new(Cut::Roman, "H")]]]
-        ),
-        tm20_set::Error::Cols
-    ));
 }
 
 #[test]
@@ -705,7 +657,7 @@ fn loose_list_is_taller_than_tight() {
     let faces = common::table();
     let tight = common::dash_list(vec![common::item("H"), common::item("H")]);
     let mut loose = common::dash_list(vec![common::item("H"), common::item("H")]);
-    loose.tight = false;
+    loose.fit = ListFit::Loose;
     let a = compose(&Sheet::tape(vec![Frame::List(tight)]), &faces).unwrap();
     let b = compose(&Sheet::tape(vec![Frame::List(loose)]), &faces).unwrap();
     assert!(
@@ -721,7 +673,7 @@ fn two_texts_in_an_item_are_paragraphs() {
     let faces = common::table();
     let items = common::dash_list(vec![common::item("H"), common::item("H")]);
     let mut paras = common::dash_list(vec![ListItem::new(vec![text("H"), text("H")])]);
-    paras.tight = true;
+    paras.fit = ListFit::Tight;
     let a = compose(&Sheet::tape(vec![Frame::List(items)]), &faces).unwrap();
     let b = compose(&Sheet::tape(vec![Frame::List(paras)]), &faces).unwrap();
     let extra = b.height_dots as i32 - a.height_dots as i32;
@@ -789,12 +741,12 @@ fn loose_item_two_paras_still_taller() {
         ListItem::new(vec![text("H"), text("H")]),
         ListItem::new(vec![text("H"), text("H")]),
     ]);
-    tight.tight = true;
+    tight.fit = ListFit::Tight;
     let mut loose = common::dash_list(vec![
         ListItem::new(vec![text("H"), text("H")]),
         ListItem::new(vec![text("H"), text("H")]),
     ]);
-    loose.tight = false;
+    loose.fit = ListFit::Loose;
     let a = compose(&Sheet::tape(vec![Frame::List(tight)]), &faces).unwrap();
     let b = compose(&Sheet::tape(vec![Frame::List(loose)]), &faces).unwrap();
     assert!(
@@ -1047,8 +999,7 @@ fn figure_blits_into_the_canvas() {
 #[test]
 fn notes_follow_the_frames() {
     let faces = common::table();
-    let mut span = Span::new(Cut::Italic, "Canon");
-    span.note = std::num::NonZeroU32::new(1);
+    let span = Span::new(Cut::Italic, "Canon").noted(std::num::NonZeroU32::new(1).unwrap());
     let mut sheet = Sheet::tape(vec![Frame::Text(TextBlock {
         size: TextSize::Pt11,
         spans: vec![span],
@@ -1075,8 +1026,7 @@ fn notes_follow_the_frames() {
 #[test]
 fn notes_rule_has_two_points_of_air() {
     let faces = common::table();
-    let mut span = Span::new(Cut::Roman, "H");
-    span.note = std::num::NonZeroU32::new(1);
+    let span = Span::new(Cut::Roman, "H").noted(std::num::NonZeroU32::new(1).unwrap());
     let mut sheet = Sheet::tape(vec![Frame::Text(TextBlock {
         size: TextSize::Pt11,
         spans: vec![span],
@@ -1152,8 +1102,7 @@ fn dump_preview_pngs() {
         "Hello Hello Hello Hello Hello Hello Hello Hello Hello Hello Hello Hello Hello Hello Hello Hello",
     );
     let mut notes = Sheet::tape(vec![text("Body.")]);
-    let mut span = Span::new(Cut::Italic, "Canon");
-    span.note = std::num::NonZeroU32::new(1);
+    let span = Span::new(Cut::Italic, "Canon").noted(std::num::NonZeroU32::new(1).unwrap());
     notes.frames = vec![Frame::Text(TextBlock {
         size: TextSize::Pt11,
         spans: vec![span],

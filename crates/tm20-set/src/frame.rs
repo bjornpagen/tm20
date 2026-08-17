@@ -56,18 +56,36 @@ impl Thickness {
 
 /// One voice on a wrapping line. Size lives on the block, not here.
 #[derive(Clone)]
-pub struct Span<'a> {
-    pub cut: Cut,
-    pub text: Cow<'a, str>,
-    pub note: Option<NonZeroU32>,
+pub enum Span<'a> {
+    Type {
+        cut: Cut,
+        text: Cow<'a, str>,
+        note: Option<NonZeroU32>,
+    },
+    Math(Math),
 }
 
 impl<'a> Span<'a> {
     pub fn new(cut: Cut, text: impl Into<Cow<'a, str>>) -> Self {
-        Self {
+        Self::Type {
             cut,
             text: text.into(),
             note: None,
+        }
+    }
+
+    pub fn math(m: Math) -> Self {
+        Self::Math(m)
+    }
+
+    pub fn noted(self, n: NonZeroU32) -> Self {
+        match self {
+            Self::Type { cut, text, .. } => Self::Type {
+                cut,
+                text,
+                note: Some(n),
+            },
+            Self::Math(_) => panic!("a note attaches to type, not math"),
         }
     }
 }
@@ -118,8 +136,47 @@ pub enum ColAlign {
 pub struct Cols<'a> {
     pub size: TextSize,
     pub gutter: GridSkip,
-    pub align: Vec<ColAlign>,
-    pub rows: Vec<Vec<Vec<Span<'a>>>>,
+    pub body: ColBody<'a>,
+}
+
+/// Column count is the variant. A one-column or four-column grid has no value.
+pub enum ColBody<'a> {
+    Two {
+        align: [ColAlign; 2],
+        rows: Vec<[Vec<Span<'a>>; 2]>,
+    },
+    Three {
+        align: [ColAlign; 3],
+        rows: Vec<[Vec<Span<'a>>; 3]>,
+    },
+}
+
+impl<'a> Cols<'a> {
+    pub fn two(
+        size: TextSize,
+        gutter: GridSkip,
+        align: [ColAlign; 2],
+        rows: Vec<[Vec<Span<'a>>; 2]>,
+    ) -> Self {
+        Self {
+            size,
+            gutter,
+            body: ColBody::Two { align, rows },
+        }
+    }
+
+    pub fn three(
+        size: TextSize,
+        gutter: GridSkip,
+        align: [ColAlign; 3],
+        rows: Vec<[Vec<Span<'a>>; 3]>,
+    ) -> Self {
+        Self {
+            size,
+            gutter,
+            body: ColBody::Three { align, rows },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,23 +191,40 @@ pub enum Marker {
     Decimal { start: u32, delim: DecimalDelim },
 }
 
+/// List mark for one item. A task is not a nullable dash.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemMark {
+    List,
+    Task { checked: bool },
+}
+
 /// One list item. A task replaces the dash or decimal with a drawn checkbox.
 pub struct ListItem<'a> {
-    pub task: Option<bool>,
+    pub mark: ItemMark,
     pub frames: Vec<Frame<'a>>,
 }
 
 impl<'a> ListItem<'a> {
     pub fn new(frames: Vec<Frame<'a>>) -> Self {
-        Self { task: None, frames }
+        Self {
+            mark: ItemMark::List,
+            frames,
+        }
     }
 
     pub fn task(checked: bool, frames: Vec<Frame<'a>>) -> Self {
         Self {
-            task: Some(checked),
+            mark: ItemMark::Task { checked },
             frames,
         }
     }
+}
+
+/// CommonMark list density. A bool would not say which way is tight.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListFit {
+    Tight,
+    Loose,
 }
 
 /// Hanging list. Marker in the margin; runovers align with the text, not the mark.
@@ -158,7 +232,7 @@ pub struct List<'a> {
     pub size: TextSize,
     pub cut: Cut,
     pub marker: Marker,
-    pub tight: bool,
+    pub fit: ListFit,
     pub items: Vec<ListItem<'a>>,
 }
 
@@ -210,7 +284,15 @@ pub struct Code<'a> {
     pub lines: Vec<Cow<'a, str>>,
 }
 
-/// 1-bit figure, already scaled to the measure. `true` is black.
+fn bitmap(width: u16, height: u16, bits: Vec<bool>) -> Result<(u16, u16, Vec<bool>), Error> {
+    if width == 0 || height == 0 || bits.len() != width as usize * height as usize {
+        return Err(Error::Image);
+    }
+    Ok((width, height, bits))
+}
+
+/// Photograph. Always scaled to the measure, flush left. `true` is black.
+#[derive(Clone)]
 pub struct Figure {
     pub width: u16,
     pub height: u16,
@@ -219,9 +301,7 @@ pub struct Figure {
 
 impl Figure {
     pub fn from_bits(width: u16, height: u16, bits: Vec<bool>) -> Result<Self, Error> {
-        if width == 0 || height == 0 || bits.len() != width as usize * height as usize {
-            return Err(Error::Image);
-        }
+        let (width, height, bits) = bitmap(width, height, bits)?;
         Ok(Self {
             width,
             height,
@@ -247,6 +327,57 @@ impl Figure {
         let samples: Vec<f32> = resized.pixels().map(|p| p.0[0] as f32).collect();
         let bits = floyd_steinberg(dst_w, dst_h, samples);
         Self::from_bits(dst_w as u16, dst_h as u16, bits)
+    }
+}
+
+/// TeX box. Natural size; shrinks if wider than the measure; never scales up.
+/// `ascent` is dots from the top of the bits to the baseline.
+#[derive(Clone)]
+pub struct Math {
+    pub width: u16,
+    pub height: u16,
+    pub bits: Vec<bool>,
+    pub ascent: u16,
+}
+
+impl Math {
+    pub fn from_bits(width: u16, height: u16, bits: Vec<bool>, ascent: u16) -> Result<Self, Error> {
+        let (width, height, bits) = bitmap(width, height, bits)?;
+        Ok(Self {
+            width,
+            height,
+            bits,
+            ascent: ascent.min(height),
+        })
+    }
+
+    /// Decode PNG at native size. Shrink if wider than `max_w`; never scale up.
+    pub fn from_png(bytes: &[u8], max_w: u16, ascent: u16) -> Result<Self, Error> {
+        if max_w == 0 {
+            return Err(Error::Image);
+        }
+        let img = image::load_from_memory(bytes).map_err(|_| Error::Image)?;
+        let luma = img.to_luma8();
+        let (src_w, src_h) = luma.dimensions();
+        if src_w == 0 || src_h == 0 {
+            return Err(Error::Image);
+        }
+        let max_w = u32::from(max_w);
+        let (dst_w, dst_h, samples, ascent) = if src_w > max_w {
+            let dst_w = max_w;
+            let dst_h = ((src_h as f32 * dst_w as f32 / src_w as f32).round() as u32).max(1);
+            let resized =
+                image::imageops::resize(&luma, dst_w, dst_h, image::imageops::FilterType::Triangle);
+            let scale = dst_w as f32 / src_w as f32;
+            let ascent = ((ascent as f32 * scale).round() as u16).min(dst_h as u16);
+            let samples: Vec<f32> = resized.pixels().map(|p| p.0[0] as f32).collect();
+            (dst_w, dst_h, samples, ascent)
+        } else {
+            let samples: Vec<f32> = luma.pixels().map(|p| p.0[0] as f32).collect();
+            (src_w, src_h, samples, ascent.min(src_h as u16))
+        };
+        let bits = floyd_steinberg(dst_w, dst_h, samples);
+        Self::from_bits(dst_w as u16, dst_h as u16, bits, ascent)
     }
 }
 
@@ -287,6 +418,7 @@ pub enum Frame<'a> {
     Quote(Quote<'a>),
     Code(Code<'a>),
     Figure(Figure),
+    Math(Math),
     Rule(Rule),
 }
 
@@ -300,7 +432,7 @@ pub enum Note<'a> {
 pub struct Sheet<'a> {
     pub width: Measure,
     pub frames: Vec<Frame<'a>>,
-    /// 1-based; compose paints them after the frames. [`Span::note`] indexes this.
+    /// 1-based; compose paints them after the frames. A type span’s note indexes this.
     pub notes: Vec<Note<'a>>,
 }
 
@@ -352,5 +484,21 @@ mod tests {
             Figure::from_image(&[0xff; 8], 16),
             Err(Error::Image)
         ));
+    }
+
+    #[test]
+    fn math_from_png_does_not_scale_up() {
+        let img = image::GrayImage::from_pixel(4, 2, image::Luma([0]));
+        let mut buf = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+            .unwrap();
+        let m = Math::from_png(&buf, 16, 2).unwrap();
+        assert_eq!(m.width, 4);
+        assert_eq!(m.height, 2);
+        assert_eq!(m.ascent, 2);
+        let shrink = Math::from_png(&buf, 2, 2).unwrap();
+        assert_eq!(shrink.width, 2);
+        assert!(shrink.height >= 1);
+        assert!(shrink.ascent <= shrink.height);
     }
 }

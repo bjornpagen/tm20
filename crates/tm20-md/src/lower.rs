@@ -6,12 +6,13 @@ use std::num::NonZeroU32;
 use comrak::nodes::{AstNode, ListDelimType, ListType, NodeValue, TableAlignment};
 use comrak::{parse_document, Arena, Options};
 use tm20_set::{
-    Code, ColAlign, Cols, Cut, DecimalDelim, DisplaySize, Figure, Frame, GridSkip, Head, List,
-    ListItem, Mark, MarkAlign, Marker, Measure, Note, Quote, Rule, Sheet, Span, TextBlock,
-    TextSize, Thickness, Tracking,
+    Code, ColAlign, Cols, Cut, DecimalDelim, DisplaySize, Figure, Frame, GridSkip, Head, ItemMark,
+    List, ListFit, ListItem, Mark, MarkAlign, Marker, Measure, Note, Quote, Rule, Sheet, Span,
+    TextBlock, TextSize, Thickness, Tracking,
 };
 
 use crate::error::Error;
+use crate::math;
 
 const NEST_CAP: u8 = 3;
 const BODY: TextSize = TextSize::Pt11;
@@ -22,6 +23,7 @@ fn options() -> Options<'static> {
     options.extension.tasklist = true;
     options.extension.autolink = true;
     options.extension.footnotes = true;
+    options.extension.math_latex = true;
     options.parse.smart = true;
     options
 }
@@ -123,8 +125,13 @@ where
     fn blocks<'a>(&mut self, node: &'a AstNode<'a>) -> Result<Vec<Frame<'static>>, Error> {
         let mut out = Vec::new();
         for child in node.children() {
-            if let Some(frame) = self.block(child)? {
-                out.push(frame);
+            match &child.data.borrow().value {
+                NodeValue::Paragraph => out.extend(self.paragraph(child)?),
+                _ => {
+                    if let Some(frame) = self.block(child)? {
+                        out.push(frame);
+                    }
+                }
             }
         }
         Ok(out)
@@ -155,8 +162,7 @@ where
             NodeValue::Item(_) | NodeValue::TaskItem(_) => Ok(None),
             NodeValue::CodeBlock(cb) => Ok(Some(code_frame(&cb.literal, self.text_size()))),
             NodeValue::HtmlBlock(_) => Err(Error::Html),
-            NodeValue::Paragraph => self.paragraph(node),
-            NodeValue::Heading(h) => Ok(Some(self.heading(node, h.level))),
+            NodeValue::Heading(h) => Ok(Some(self.heading(node, h.level)?)),
             NodeValue::ThematicBreak => Ok(Some(Frame::Rule(Rule {
                 thickness: Thickness::Two,
             }))),
@@ -167,27 +173,30 @@ where
         }
     }
 
-    fn heading<'a>(&self, node: &'a AstNode<'a>, level: u8) -> Frame<'static> {
+    fn heading<'a>(&self, node: &'a AstNode<'a>, level: u8) -> Result<Frame<'static>, Error> {
+        if has_math(node) {
+            return Err(Error::Math);
+        }
         let text = flatten(node);
         if self.in_note {
-            return Frame::Head(Head {
+            return Ok(Frame::Head(Head {
                 size: TextSize::Pt8,
                 text: text.into(),
-            });
+            }));
         }
         if level <= 1 {
-            Frame::Mark(Mark {
+            Ok(Frame::Mark(Mark {
                 cut: Cut::Roman,
                 size: DisplaySize::Pt18,
                 text: text.into(),
                 align: MarkAlign::Start,
                 tracking: Tracking(0),
-            })
+            }))
         } else {
-            Frame::Head(Head {
+            Ok(Frame::Head(Head {
                 size: BODY,
                 text: text.into(),
-            })
+            }))
         }
     }
 
@@ -213,13 +222,15 @@ where
         let mut items = Vec::new();
         for child in node.children() {
             let value = child.data.borrow().value.clone();
-            let task = match value {
-                NodeValue::TaskItem(t) => Some(t.symbol.is_some()),
-                NodeValue::Item(_) => None,
+            let mark = match value {
+                NodeValue::TaskItem(t) => ItemMark::Task {
+                    checked: t.symbol.is_some(),
+                },
+                NodeValue::Item(_) => ItemMark::List,
                 _ => return Err(Error::Html),
             };
             items.push(ListItem {
-                task,
+                mark,
                 frames: self.blocks(child)?,
             });
         }
@@ -228,18 +239,22 @@ where
             size: self.text_size(),
             cut: Cut::Roman,
             marker,
-            tight: nl.tight,
+            fit: if nl.tight {
+                ListFit::Tight
+            } else {
+                ListFit::Loose
+            },
             items,
         }))
     }
 
-    fn paragraph<'a>(&mut self, node: &'a AstNode<'a>) -> Result<Option<Frame<'static>>, Error> {
+    fn paragraph<'a>(&mut self, node: &'a AstNode<'a>) -> Result<Vec<Frame<'static>>, Error> {
         let kids: Vec<_> = node.children().collect();
         if kids.len() == 1 {
             if let NodeValue::Image(link) = &kids[0].data.borrow().value {
                 let bytes = (self.load)(link.url.as_ref())?;
                 let fig = Figure::from_image(&bytes, self.measure)?;
-                return Ok(Some(Frame::Figure(fig)));
+                return Ok(vec![Frame::Figure(fig)]);
             }
         }
         if kids
@@ -248,10 +263,26 @@ where
         {
             return Err(Error::MixedImage);
         }
-        Ok(Some(Frame::Text(TextBlock {
-            size: self.text_size(),
-            spans: self.inlines(node, Voice::ROMAN)?,
-        })))
+        let mut frames = Vec::new();
+        let mut spans = Vec::new();
+        for child in kids {
+            let display = match &child.data.borrow().value {
+                NodeValue::Math(m) => m.display_math,
+                _ => false,
+            };
+            if display {
+                flush_text(self.text_size(), &mut spans, &mut frames);
+                let NodeValue::Math(m) = child.data.borrow().value.clone() else {
+                    unreachable!("display math");
+                };
+                let m = math::display(&m.literal, self.text_size(), self.measure)?;
+                frames.push(Frame::Math(m));
+                continue;
+            }
+            self.inline(child, Voice::ROMAN, &mut spans)?;
+        }
+        flush_text(self.text_size(), &mut spans, &mut frames);
+        Ok(frames)
     }
 
     fn table<'a>(
@@ -279,7 +310,9 @@ where
                 let mut spans = self.inlines(cell, voice)?;
                 if header {
                     for s in &mut spans {
-                        s.cut = Cut::Bold;
+                        if let Span::Type { cut, .. } = s {
+                            *cut = Cut::Bold;
+                        }
                     }
                 }
                 cells.push(spans);
@@ -289,12 +322,7 @@ where
             }
             rows.push(cells);
         }
-        Ok(Frame::Cols(Cols {
-            size: self.text_size(),
-            gutter: GridSkip::ONE,
-            align,
-            rows,
-        }))
+        Ok(Frame::Cols(cols_frame(self.text_size(), align, rows)?))
     }
 
     fn inlines<'a>(
@@ -340,17 +368,23 @@ where
                 for child in node.children() {
                     self.inline(child, inner, &mut inner_spans)?;
                 }
-                let text: String = inner_spans.iter().map(|s| s.text.as_ref()).collect();
+                let text: String = inner_spans
+                    .iter()
+                    .map(|s| match s {
+                        Span::Type { text, .. } => text.as_ref(),
+                        Span::Math(_) => "",
+                    })
+                    .collect();
                 let note = self.note_for_dest(&link.url, &text);
                 if inner_spans.is_empty() {
-                    inner_spans.push(Span {
+                    inner_spans.push(Span::Type {
                         cut: cut(inner),
                         text: std::borrow::Cow::Owned(String::new()),
                         note,
                     });
                 } else if let Some(n) = note {
-                    if let Some(last) = inner_spans.last_mut() {
-                        last.note = Some(n);
+                    if let Span::Type { note, .. } = inner_spans.last_mut().unwrap() {
+                        *note = Some(n);
                     }
                 }
                 spans.extend(inner_spans);
@@ -358,8 +392,8 @@ where
             NodeValue::FootnoteReference(fr) => {
                 let n = self.note_for_foot(&fr.name);
                 match spans.last_mut() {
-                    Some(last) if last.note.is_none() => last.note = Some(n),
-                    _ => spans.push(Span {
+                    Some(Span::Type { note, .. }) if note.is_none() => *note = Some(n),
+                    _ => spans.push(Span::Type {
                         cut: cut(voice),
                         text: std::borrow::Cow::Owned(String::new()),
                         note: Some(n),
@@ -367,6 +401,10 @@ where
                 }
             }
             NodeValue::Image(_) => return Err(Error::MixedImage),
+            NodeValue::Math(m) => {
+                let math = math::inline(&m.literal, self.text_size(), self.measure)?;
+                spans.push(Span::math(math));
+            }
             NodeValue::HtmlInline(_) => return Err(Error::Html),
             NodeValue::Escaped => {
                 for child in node.children() {
@@ -429,6 +467,20 @@ fn code_frame(literal: &str, size: TextSize) -> Frame<'static> {
     Frame::Code(Code { size, lines })
 }
 
+fn flush_text(size: TextSize, spans: &mut Vec<Span<'static>>, frames: &mut Vec<Frame<'static>>) {
+    if spans.is_empty() {
+        return;
+    }
+    frames.push(Frame::Text(TextBlock {
+        size,
+        spans: std::mem::take(spans),
+    }));
+}
+
+fn has_math<'a>(node: &'a AstNode<'a>) -> bool {
+    matches!(node.data.borrow().value, NodeValue::Math(_)) || node.children().any(has_math)
+}
+
 fn flatten<'a>(node: &'a AstNode<'a>) -> String {
     let mut s = String::new();
     flatten_into(node, &mut s);
@@ -458,15 +510,59 @@ fn strip_code(lit: &str) -> &str {
     }
 }
 
+fn cols_frame(
+    size: TextSize,
+    align: Vec<ColAlign>,
+    rows: Vec<Vec<Vec<Span<'static>>>>,
+) -> Result<Cols<'static>, Error> {
+    match align.len() {
+        2 => {
+            let align = [align[0], align[1]];
+            let rows = rows
+                .into_iter()
+                .map(|r| pair(r))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Cols::two(size, GridSkip::ONE, align, rows))
+        }
+        3 => {
+            let align = [align[0], align[1], align[2]];
+            let rows = rows
+                .into_iter()
+                .map(|r| triple(r))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Cols::three(size, GridSkip::ONE, align, rows))
+        }
+        _ => Err(Error::Cols),
+    }
+}
+
+fn pair(cells: Vec<Vec<Span<'static>>>) -> Result<[Vec<Span<'static>>; 2], Error> {
+    let mut it = cells.into_iter();
+    Ok([it.next().ok_or(Error::Cols)?, it.next().ok_or(Error::Cols)?])
+}
+
+fn triple(cells: Vec<Vec<Span<'static>>>) -> Result<[Vec<Span<'static>>; 3], Error> {
+    let mut it = cells.into_iter();
+    Ok([
+        it.next().ok_or(Error::Cols)?,
+        it.next().ok_or(Error::Cols)?,
+        it.next().ok_or(Error::Cols)?,
+    ])
+}
+
 fn push(spans: &mut Vec<Span<'static>>, cut: Cut, text: &str, note: Option<NonZeroU32>) {
     if text.is_empty() && note.is_none() {
         return;
     }
     match spans.last_mut() {
-        Some(prev) if prev.cut == cut && prev.note.is_none() && note.is_none() => {
-            prev.text.to_mut().push_str(text);
+        Some(Span::Type {
+            cut: prev_cut,
+            text: prev,
+            note: prev_note,
+        }) if *prev_cut == cut && prev_note.is_none() && note.is_none() => {
+            prev.to_mut().push_str(text);
         }
-        _ => spans.push(Span {
+        _ => spans.push(Span::Type {
             cut,
             text: std::borrow::Cow::Owned(text.to_string()),
             note,

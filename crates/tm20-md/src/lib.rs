@@ -3,6 +3,7 @@
 
 mod error;
 mod lower;
+mod math;
 
 pub use error::Error;
 pub use lower::sheet;

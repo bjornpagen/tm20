@@ -7,6 +7,7 @@ pub enum Error {
     Html,
     MixedImage,
     Image,
+    Math,
     Nesting,
     Cols,
     Note,
@@ -19,6 +20,7 @@ impl fmt::Display for Error {
             Error::Html => write!(f, "raw HTML is not representable"),
             Error::MixedImage => write!(f, "a paragraph cannot mix text and an image"),
             Error::Image => write!(f, "could not load figure"),
+            Error::Math => write!(f, "could not typeset math"),
             Error::Nesting => write!(f, "quote or list nested more than three deep"),
             Error::Cols => write!(f, "table must have two or three columns"),
             Error::Note => write!(f, "footnote has no definition"),
@@ -34,7 +36,6 @@ impl From<tm20_set::Error> for Error {
         match e {
             tm20_set::Error::Image => Error::Image,
             tm20_set::Error::Nesting => Error::Nesting,
-            tm20_set::Error::Cols => Error::Cols,
             other => Error::Set(other),
         }
     }

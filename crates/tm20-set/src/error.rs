@@ -12,7 +12,6 @@ pub enum Error {
     Overflow { width: u32, height: u32 },
     Image,
     Nesting,
-    Cols,
 }
 
 impl fmt::Display for Error {
@@ -26,7 +25,6 @@ impl fmt::Display for Error {
             }
             Error::Image => write!(f, "could not decode figure"),
             Error::Nesting => write!(f, "quote or list nested more than three deep"),
-            Error::Cols => write!(f, "table must have two or three columns"),
         }
     }
 }

@@ -11,7 +11,8 @@ Protocol, typesetter, markdown. There is no printer builder and no CUPS.
   lives here as bytes. Which face those bytes came from is the program that
   prints, not the library.
 - **`tm20-md`** — CommonMark 0.31.2 plus pipe tables, task lists, autolinks,
-  and footnotes, walked into a `Sheet`. comrak lives here. This crate does
+  footnotes, and LaTeX math (`\(inline\)`, `\[display\]`), walked into a
+  `Sheet`. Dollars stay currency. comrak and RaTeX live here. This crate does
   not depend on `tm20`.
 
 `tm20-set` depends on `tm20`. Never the reverse. The `tm20-set` binary lives

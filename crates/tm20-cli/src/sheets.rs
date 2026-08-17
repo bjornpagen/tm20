@@ -4,9 +4,9 @@ use std::num::NonZeroU32;
 
 use tm20::document::Document;
 use tm20_set::{
-    ColAlign, Code, Cols, Cut, DecimalDelim, DisplaySize, Figure, Frame, GridSkip, Head, List,
-    ListItem, Mark, MarkAlign, Marker, Note, Quote, Rule, Sheet, Span, TextBlock, TextSize,
-    Thickness, Tracking,
+    Code, ColAlign, Cols, Cut, DecimalDelim, DisplaySize, Figure, Frame, GridSkip, Head, List,
+    ListFit, ListItem, Mark, MarkAlign, Marker, Note, Quote, Rule, Sheet, Span, TextBlock,
+    TextSize, Thickness, Tracking,
 };
 
 use crate::kit::{nhg_table, system_table};
@@ -56,15 +56,12 @@ impl Case {
 }
 
 fn cols<'a>(cut: Cut, item: &'a str, amount: &'a str) -> Cols<'a> {
-    Cols {
-        size: TextSize::Pt11,
-        gutter: GridSkip::ONE,
-        align: vec![ColAlign::Start, ColAlign::End],
-        rows: vec![vec![
-            vec![Span::new(cut, item)],
-            vec![Span::new(cut, amount)],
-        ]],
-    }
+    Cols::two(
+        TextSize::Pt11,
+        GridSkip::ONE,
+        [ColAlign::Start, ColAlign::End],
+        vec![[vec![Span::new(cut, item)], vec![Span::new(cut, amount)]]],
+    )
 }
 
 fn item<'a>(cut: Cut, size: TextSize, text: &'a str) -> Vec<Frame<'a>> {
@@ -154,7 +151,7 @@ fn prose() -> Result<Document> {
             size: body,
             cut: Cut::Roman,
             marker: Marker::Dash,
-            tight: true,
+            fit: ListFit::Tight,
             items: vec![
                 li(
                     Cut::Roman,
@@ -225,10 +222,8 @@ fn suite() -> Result<Document> {
     let faces = system_table()?;
     let body = TextSize::Pt11;
     let pig = Figure::from_image(include_bytes!("pig.png"), 160)?;
-    let mut canon = Span::new(Cut::Italic, "The Vignelli Canon");
-    canon.note = NonZeroU32::new(1);
-    let mut ruder = Span::new(Cut::Italic, "Typographie");
-    ruder.note = NonZeroU32::new(2);
+    let canon = Span::new(Cut::Italic, "The Vignelli Canon").noted(NonZeroU32::new(1).unwrap());
+    let ruder = Span::new(Cut::Italic, "Typographie").noted(NonZeroU32::new(2).unwrap());
     let mut sheet = Sheet::tape(vec![
         Frame::Mark(Mark {
             cut: Cut::Roman,
@@ -262,7 +257,7 @@ fn suite() -> Result<Document> {
             size: body,
             cut: Cut::Roman,
             marker: Marker::Dash,
-            tight: true,
+            fit: ListFit::Tight,
             items: vec![ListItem::new(vec![
                 Frame::Text(TextBlock::plain(
                     Cut::Roman,
@@ -276,7 +271,7 @@ fn suite() -> Result<Document> {
                         start: 1,
                         delim: DecimalDelim::Period,
                     },
-                    tight: true,
+                    fit: ListFit::Tight,
                     items: vec![
                         li(Cut::Roman, body, "Nested."),
                         li(Cut::Roman, body, "Still nested."),
