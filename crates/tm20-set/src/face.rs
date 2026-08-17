@@ -1,9 +1,11 @@
-//! Parsed CFF OpenType. Optical role is a second parse into [`TextFace`] or
-//! [`DisplayFace`]. Which [`Cut`] a face fills is decided outside this crate.
-//! HarfRust shapes; fontdue paints; this crate caches the strike.
+//! Parsed sfnt face (CFF or glyf, one file or a collection). Optical role is a
+//! second parse into [`TextFace`] or [`DisplayFace`]. Which [`Cut`] a face fills
+//! is decided outside this crate. HarfRust shapes; fontdue paints; this crate
+//! caches the strike.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use fontdue::{Font as RasterFont, FontSettings};
 use harfrust::font::FontFuncs;
@@ -81,9 +83,9 @@ impl FaceTable {
     }
 }
 
-/// Parsed CFF face. Not an authoring type; call [`text`](Self::text) or [`display`](Self::display).
+/// Parsed face. Not an authoring type; call [`text`](Self::text) or [`display`](Self::display).
 pub struct Face {
-    bytes: Vec<u8>,
+    bytes: Arc<[u8]>,
     index: u32,
     raster: RasterFont,
     hb: ShaperData,
@@ -110,28 +112,66 @@ fn scale(ppem: u16) -> i32 {
     i32::from(ppem) * FRAC
 }
 
-/// CFF OpenType is `OTTO` plus a `CFF ` or `CFF2` table. TrueType is a different magic.
-fn is_cff_sfnt(data: &[u8]) -> bool {
-    let Some(magic) = data.get(..4) else {
-        return false;
-    };
-    if magic != b"OTTO" {
-        return false;
-    }
-    let Some(n) = data.get(4..6) else {
-        return false;
-    };
-    let n = u16::from_be_bytes([n[0], n[1]]) as usize;
-    for i in 0..n {
-        let rec = 12 + i * 16;
-        let Some(tag) = data.get(rec..rec + 4) else {
-            return false;
+fn parse_postscript_name(name: &[u8]) -> Option<String> {
+    let count = u16_be(name, 2)? as usize;
+    let storage = u16_be(name, 4)? as usize;
+    let mut best: Option<(u8, String)> = None;
+    for i in 0..count {
+        let rec = 6 + i * 12;
+        let platform = u16_be(name, rec)?;
+        let encoding = u16_be(name, rec + 2)?;
+        let name_id = u16_be(name, rec + 6)?;
+        if name_id != 6 {
+            continue;
+        }
+        let len = u16_be(name, rec + 8)? as usize;
+        let off = u16_be(name, rec + 10)? as usize;
+        let bytes = name.get(storage + off..storage + off + len)?;
+        let rank = match (platform, encoding) {
+            (3, 1 | 10) => 0,
+            (0, _) => 1,
+            (1, 0) => 2,
+            _ => 3,
         };
-        if tag == b"CFF " || tag == b"CFF2" {
-            return true;
+        let Some(s) = decode_name(platform, encoding, bytes) else {
+            continue;
+        };
+        if s.is_empty() {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(r, _)| rank < *r) {
+            best = Some((rank, s));
         }
     }
-    false
+    best.map(|(_, s)| s)
+}
+
+fn u16_be(bytes: &[u8], at: usize) -> Option<u16> {
+    Some(u16::from_be_bytes(bytes.get(at..at + 2)?.try_into().ok()?))
+}
+
+fn decode_name(platform: u16, encoding: u16, bytes: &[u8]) -> Option<String> {
+    match (platform, encoding) {
+        (0, _) | (3, 1 | 10) => {
+            if !bytes.len().is_multiple_of(2) {
+                return None;
+            }
+            let units: Vec<u16> = bytes
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|c| u16::from_be_bytes(*c))
+                .collect();
+            String::from_utf16(&units).ok()
+        }
+        _ => {
+            if bytes.iter().all(|b| *b < 128) {
+                Some(bytes.iter().map(|&b| char::from(b)).collect())
+            } else {
+                None
+            }
+        }
+    }
 }
 
 struct StrikeAdvance<'a> {
@@ -156,13 +196,11 @@ impl Face {
         Self::from_bytes_index(bytes, 0)
     }
 
-    pub fn from_bytes_index(bytes: Vec<u8>, index: u32) -> Result<Self, Error> {
-        let font = FontRef::from_index(&bytes, index).map_err(|_| Error::Font)?;
-        if !is_cff_sfnt(&bytes) {
-            return Err(Error::Font);
-        }
+    pub fn from_bytes_index(bytes: impl Into<Arc<[u8]>>, index: u32) -> Result<Self, Error> {
+        let bytes = bytes.into();
+        let font = FontRef::from_index(bytes.as_ref(), index).map_err(|_| Error::Font)?;
         let raster = RasterFont::from_bytes(
-            bytes.as_slice(),
+            bytes.as_ref(),
             FontSettings {
                 collection_index: index,
                 ..FontSettings::default()
@@ -200,8 +238,14 @@ impl Face {
         DisplayFace(self)
     }
 
+    /// PostScript name (name id 6). Kit maps this to a [`Cut`].
+    pub fn postscript_name(&self) -> Option<String> {
+        let data = self.font().table_data(Tag::new(b"name"))?;
+        parse_postscript_name(data.as_bytes())
+    }
+
     fn font(&self) -> FontRef<'_> {
-        FontRef::from_index(&self.bytes, self.index).expect("Face bytes already parsed")
+        FontRef::from_index(self.bytes.as_ref(), self.index).expect("Face bytes already parsed")
     }
 
     fn ascent_frac(&self, ppem: u16) -> i32 {
@@ -209,6 +253,9 @@ impl Face {
     }
 
     fn paint_strike(&self, glyph_id: u16, ppem: u16) -> Strike {
+        if glyph_id >= self.raster.glyph_count() {
+            return Strike::empty(0);
+        }
         let (metrics, bitmap) = self.raster.rasterize_indexed(glyph_id, f32::from(ppem));
         let width = u32::try_from(metrics.width).unwrap_or(0);
         let height = u32::try_from(metrics.height).unwrap_or(0);
@@ -386,8 +433,32 @@ mod tests {
     }
 
     #[test]
-    fn truetype_is_font_error() {
+    fn helvetica_ttc_parses() {
         let bytes = std::fs::read("/System/Library/Fonts/Helvetica.ttc").expect("Helvetica.ttc");
-        assert!(matches!(Face::from_bytes_index(bytes, 0), Err(Error::Font)));
+        let face = Face::from_bytes_index(bytes, 0).expect("glyf OpenType");
+        let name = face.postscript_name().expect("PostScript name");
+        assert!(name.starts_with("Helvetica"), "{name}");
+    }
+
+    #[test]
+    fn helvetica_ttc_names_the_cuts() {
+        let bytes: Arc<[u8]> = std::fs::read("/System/Library/Fonts/Helvetica.ttc")
+            .expect("Helvetica.ttc")
+            .into();
+        let mut names = Vec::new();
+        for index in 0.. {
+            let Ok(face) = Face::from_bytes_index(bytes.clone(), index) else {
+                break;
+            };
+            names.push(face.postscript_name().unwrap_or_default());
+        }
+        for need in [
+            "Helvetica",
+            "Helvetica-Bold",
+            "Helvetica-Oblique",
+            "Helvetica-BoldOblique",
+        ] {
+            assert!(names.iter().any(|n| n == need), "{need} not in {names:?}");
+        }
     }
 }

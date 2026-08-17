@@ -10,7 +10,7 @@ use tm20_set::{
 };
 
 use crate::Result;
-use crate::kit::{nhg_table, system_table};
+use crate::kit::system_table;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Case {
@@ -29,8 +29,8 @@ pub fn catalog() -> &'static [Case] {
             title: "markdown-shaped: heads, emphasis, quote, list, columns",
         },
         Case {
-            id: "nhg",
-            title: "Neue Haas Grotesk voices, not a weight ladder",
+            id: "helvetica",
+            title: "Helvetica voices, not a weight ladder",
         },
         Case {
             id: "suite",
@@ -48,7 +48,7 @@ impl Case {
         match self.id {
             "ticket" => ticket(),
             "prose" => prose(),
-            "nhg" => nhg(),
+            "helvetica" => helvetica(),
             "suite" => suite(),
             _ => unreachable!("catalog ids are closed"),
         }
@@ -178,13 +178,13 @@ fn prose() -> Result<Document> {
     Ok(tm20_set::lower(&Sheet::tape(frames), &faces)?)
 }
 
-fn nhg() -> Result<Document> {
-    let faces = nhg_table()?;
+fn helvetica() -> Result<Document> {
+    let faces = system_table()?;
     let body = TextSize::Pt11;
     let mut frames = vec![Frame::Mark(Mark {
         cut: Cut::Roman,
         size: DisplaySize::Pt18,
-        text: "Neue Haas Grotesk".into(),
+        text: "Helvetica".into(),
         align: MarkAlign::Start,
         tracking: Tracking(0),
     })];
@@ -192,7 +192,7 @@ fn nhg() -> Result<Document> {
         frames.push(Frame::Mark(Mark {
             cut: Cut::Light,
             size: DisplaySize::Pt18,
-            text: "Display Light".into(),
+            text: "Light".into(),
             align: MarkAlign::Start,
             tracking: Tracking(40),
         }));
@@ -205,8 +205,8 @@ fn nhg() -> Result<Document> {
             size: body,
             spans: vec![
                 Span::new(Cut::Roman, "Roman body. "),
-                Span::new(Cut::Italic, "Italic is a cut, not a slant. "),
-                Span::new(Cut::Medium, "Medium is a grey, not Bold’s neighbour."),
+                Span::new(Cut::Italic, "Oblique fills Italic. "),
+                Span::new(Cut::Bold, "Bold is a voice, not a size."),
             ],
         }),
         Frame::Head(Head {

@@ -54,7 +54,7 @@ is hardcoded to the T20III product id until someone adds another.
 cargo run -p tm20 -- hello
 cargo run -p tm20 -- test all          # skip --wait if bulk IN is dirty
 cargo run --bin tm20-set -- print ticket
-cargo run --bin tm20-set -- print nhg     # needs Neue Haas Grotesk in ~/Library/Fonts
+cargo run --bin tm20-set -- print helvetica
 cargo run --bin tm20-set -- print md path.md
 cargo run --bin tm20-set -- print md crates/tm20-md/fixtures
 ```

@@ -55,7 +55,7 @@ tm20-set   typesetter: Sheet of Frames → Graphics. OpenType, Vignelli sizes, 8
 
 `pack()` (bool pixels → MSB-first bytes) stays in `tm20`. That is the wire format of `Graphics`, not a pretty-printer.
 
-`tm20` CLI stays a protocol exerciser. Host typeface is `tm20-set`. Receipts with Grotesk are a `Sheet` or they do not exist. `PrintSpeed` stays on `tm20::Command`; the typesetter does not inject it.
+`tm20` CLI stays a protocol exerciser. Host typeface is `tm20-set`. Receipts with Helvetica are a `Sheet` or they do not exist. `PrintSpeed` stays on `tm20::Command`; the typesetter does not inject it.
 
 ---
 

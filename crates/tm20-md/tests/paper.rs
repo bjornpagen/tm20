@@ -1,6 +1,7 @@
 //! Fixtures encode. A sheet taller than 910 dots splits into several Graphics.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use tm20::command::Command;
 use tm20::encode::encode;
@@ -13,36 +14,44 @@ fn fixtures_dir() -> PathBuf {
 }
 
 fn table() -> FaceTable {
+    let bytes: Arc<[u8]> = std::fs::read("/System/Library/Fonts/Helvetica.ttc")
+        .expect("Helvetica.ttc")
+        .into();
     let mut table = FaceTable::new();
-    table.set_text(
-        Cut::Roman,
-        load("Neue Haas Grotesk Text Pro 55 Roman.otf").text(),
-    );
-    table.set_text(
-        Cut::Italic,
-        load("Neue Haas Grotesk Text Pro 56 Italic.otf").text(),
-    );
-    table.set_text(
-        Cut::Bold,
-        load("Neue Haas Grotesk Text Pro 75 Bold.otf").text(),
-    );
-    table.set_text(
-        Cut::BoldItalic,
-        load("Neue Haas Grotesk Text Pro 76 Bold Italic.otf").text(),
-    );
-    table.set_text(Cut::Mono, load("CommitMono-400-Regular.otf").text());
-    table.set_display(
-        Cut::Roman,
-        load("Neue Haas Grotesk Display Pro 55 Roman.otf").display(),
-    );
+    for index in 0.. {
+        let Ok(face) = Face::from_bytes_index(bytes.clone(), index) else {
+            break;
+        };
+        let Some(name) = face.postscript_name() else {
+            continue;
+        };
+        match name.as_str() {
+            "Helvetica" => {
+                table.set_text(
+                    Cut::Roman,
+                    Face::from_bytes_index(bytes.clone(), index)
+                        .expect("Helvetica Regular")
+                        .text(),
+                );
+                table.set_display(Cut::Roman, face.display());
+            }
+            "Helvetica-Bold" => table.set_text(Cut::Bold, face.text()),
+            "Helvetica-Oblique" => table.set_text(Cut::Italic, face.text()),
+            "Helvetica-BoldOblique" => table.set_text(Cut::BoldItalic, face.text()),
+            "Helvetica-Light" => table.set_display(Cut::Light, face.display()),
+            _ => {}
+        }
+    }
+    table.set_text(Cut::Mono, load_mono().text());
     table
 }
 
-fn load(file: &str) -> Face {
+fn load_mono() -> Face {
+    let file = "CommitMono-400-Regular.otf";
     let home = std::env::var_os("HOME").unwrap_or_default();
     let path = Path::new(&home).join("Library/Fonts").join(file);
     let bytes = std::fs::read(&path).unwrap_or_else(|_| panic!("{file} not in {}", path.display()));
-    Face::from_bytes(bytes).unwrap_or_else(|_| panic!("{file} is CFF OpenType"))
+    Face::from_bytes(bytes).unwrap_or_else(|_| panic!("{file} is OpenType"))
 }
 
 fn markdown_files() -> Vec<PathBuf> {
