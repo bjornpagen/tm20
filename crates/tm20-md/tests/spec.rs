@@ -1,6 +1,8 @@
 //! Lowering proofs. One markdown snippet per spec subsection. Not HTML goldens.
 
-use tm20_md::{Error, sheet};
+use std::path::Path;
+
+use tm20_md::{Error, image_bytes, sheet};
 use tm20_set::{
     ColAlign, ColBody, Cut, DecimalDelim, Frame, ItemMark, ListFit, Marker, Measure, Note, Span,
     TextSize, Thickness,
@@ -103,7 +105,8 @@ fn two_paragraphs() {
 
 #[test]
 fn fenced_and_indented_code() {
-    let fenced = parse("```\nfn measure() -> u16 { 576 }\n```");
+    let fenced = parse("```rust\nfn measure() -> u16 { 576 }\n```");
+    assert_eq!(fenced.frames.len(), 1);
     assert!(matches!(
         &fenced.frames[0],
         Frame::Code(c) if c.lines.iter().any(|l| l.contains("fn measure"))
@@ -288,8 +291,21 @@ fn link_is_italic_with_a_note() {
         _ => panic!("text"),
     }
     assert_eq!(s.notes.len(), 1);
-    assert!(matches!(&s.notes[0], Note::Dest(d) if d == "https://example.com/canon"));
+    assert!(matches!(
+        &s.notes[0],
+        Note::Dest { dest, title: None } if dest == "https://example.com/canon"
+    ));
     let _ = link;
+}
+
+#[test]
+fn link_title_is_the_work_then_the_location() {
+    let s = parse("[the canon](https://example.com/canon.pdf \"The Vignelli Canon\")");
+    assert!(matches!(
+        &s.notes[0],
+        Note::Dest { dest, title: Some(t) }
+            if dest == "https://example.com/canon.pdf" && t == "The Vignelli Canon"
+    ));
 }
 
 #[test]
@@ -316,6 +332,22 @@ fn autolink_has_no_note() {
         _ => panic!("text"),
     }
     assert!(s.notes.is_empty());
+}
+
+#[test]
+fn email_autolink_notes_the_address() {
+    let s = parse("Write <foo@bar.com>.");
+    match &s.frames[0] {
+        Frame::Text(b) => {
+            assert!(b.spans.iter().any(|sp| span_cut(sp) == Cut::Italic));
+            assert!(b.spans.iter().any(|sp| span_note(sp) == Some(1)));
+        }
+        _ => panic!("text"),
+    }
+    assert!(matches!(
+        &s.notes[0],
+        Note::Dest { dest, title: None } if dest == "foo@bar.com"
+    ));
 }
 
 #[test]
@@ -346,7 +378,42 @@ fn image_paragraph_is_a_figure() {
     img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
         .unwrap();
     let s = sheet("![pig](pig.png)", Measure::TAPE, |_| Ok(buf.clone())).unwrap();
-    assert!(matches!(s.frames[0], Frame::Figure(_)));
+    match &s.frames[0] {
+        Frame::Figure(fig) => assert_eq!(fig.note.map(std::num::NonZero::get), Some(1)),
+        _ => panic!("figure"),
+    }
+    assert!(matches!(
+        &s.notes[0],
+        Note::Dest { dest, title: None } if dest == "pig"
+    ));
+}
+
+#[test]
+fn figure_dest_resolves_and_keeps_native_size() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures");
+    let src = image::load_from_memory(&std::fs::read(dir.join("cat.png")).unwrap()).unwrap();
+    let s = sheet("![cat](./cat.png)", Measure::TAPE, |d| image_bytes(&dir, d)).unwrap();
+    match &s.frames[0] {
+        Frame::Figure(fig) => {
+            assert_eq!(fig.width, src.width() as u16);
+            assert_eq!(fig.height, src.height() as u16);
+        }
+        _ => panic!("figure"),
+    }
+}
+
+#[test]
+fn empty_alt_has_no_note() {
+    let img = image::GrayImage::from_pixel(1, 1, image::Luma([0]));
+    let mut buf = Vec::new();
+    img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+        .unwrap();
+    let s = sheet("![](x.png)", Measure::TAPE, |_| Ok(buf.clone())).unwrap();
+    match &s.frames[0] {
+        Frame::Figure(fig) => assert!(fig.note.is_none()),
+        _ => panic!("figure"),
+    }
+    assert!(s.notes.is_empty());
 }
 
 #[test]
@@ -446,7 +513,10 @@ fn footnotes_share_the_link_registry() {
         _ => panic!("text"),
     }
     assert_eq!(s.notes.len(), 2);
-    assert!(matches!(&s.notes[0], Note::Dest(d) if d == "https://example.com"));
+    assert!(matches!(
+        &s.notes[0],
+        Note::Dest { dest, title: None } if dest == "https://example.com"
+    ));
     assert!(matches!(&s.notes[1], Note::Blocks(f) if !f.is_empty()));
 }
 

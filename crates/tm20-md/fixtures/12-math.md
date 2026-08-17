@@ -1,4 +1,4 @@
-# Maxwell
+# Math
 
 In spacetime algebra the Faraday field is one bivector \(F=\mathbf{E}+Ic\mathbf{B}\), or \(\frac{1}{2}F_{\mu\nu}\gamma^{\mu}\wedge\gamma^{\nu}\). Gauss, Faraday, Ampère, and Maxwell collapse to a single grade equation on the tape.
 

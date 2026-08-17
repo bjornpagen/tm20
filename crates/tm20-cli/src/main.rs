@@ -205,10 +205,7 @@ fn md_job(path: &Path) -> Result<(Vec<u8>, tm20::Document)> {
     let src = std::fs::read_to_string(path)?;
     let base = path.parent().unwrap_or_else(|| Path::new("."));
     let sheet = tm20_md::sheet(&src, Measure::TAPE, |dest| {
-        if dest.is_empty() || dest.contains("://") {
-            return Err(tm20_md::Error::Image);
-        }
-        std::fs::read(base.join(dest)).map_err(|_| tm20_md::Error::Image)
+        tm20_md::image_bytes(base, dest)
     })?;
     let faces = system_table()?;
     let doc = tm20_set::lower(&sheet, &faces)?;

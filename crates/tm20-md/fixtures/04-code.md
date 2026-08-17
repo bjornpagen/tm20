@@ -2,7 +2,7 @@
 
 Fenced, hung, Commit Mono. Spaces do not wrap:
 
-```
+```rust
 fn measure() -> u16 { 576 }
 fn hang(x0: u16) -> u16 { x0 + 8 }
 ```

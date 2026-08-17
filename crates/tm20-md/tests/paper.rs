@@ -7,7 +7,7 @@ use font_kit::handle::Handle;
 use font_kit::properties::{Properties, Style as KitStyle, Weight as KitWeight};
 use font_kit::source::SystemSource;
 use tm20::encode::encode;
-use tm20_md::{Error, sheet};
+use tm20_md::{image_bytes, sheet};
 use tm20_set::{Cut, Face, FaceTable, Measure, compose, preview_png};
 
 fn fixtures_dir() -> PathBuf {
@@ -97,19 +97,18 @@ fn markdown_files() -> Vec<PathBuf> {
     files
 }
 
+fn load_sheet(path: &Path) -> tm20_set::Sheet<'static> {
+    let src = std::fs::read_to_string(path).unwrap();
+    let base = path.parent().unwrap();
+    sheet(&src, Measure::TAPE, |dest| image_bytes(base, dest))
+        .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}
+
 #[test]
 fn fixtures_encode() {
     let faces = table();
     for path in markdown_files() {
-        let src = std::fs::read_to_string(&path).unwrap();
-        let base = path.parent().unwrap();
-        let sheet = sheet(&src, Measure::TAPE, |dest| {
-            if dest.is_empty() || dest.contains("://") {
-                return Err(Error::Image);
-            }
-            std::fs::read(base.join(dest)).map_err(|_| Error::Image)
-        })
-        .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let sheet = load_sheet(&path);
         let doc =
             tm20_set::lower(&sheet, &faces).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         let bytes = encode(&doc).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
@@ -123,15 +122,7 @@ fn fixtures_preview_png() {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/tm20-preview");
     std::fs::create_dir_all(&dir).unwrap();
     for path in markdown_files() {
-        let src = std::fs::read_to_string(&path).unwrap();
-        let base = path.parent().unwrap();
-        let sheet = sheet(&src, Measure::TAPE, |dest| {
-            if dest.is_empty() || dest.contains("://") {
-                return Err(Error::Image);
-            }
-            std::fs::read(base.join(dest)).map_err(|_| Error::Image)
-        })
-        .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let sheet = load_sheet(&path);
         let g = compose(&sheet, &faces).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         let name = path.file_stem().unwrap().to_string_lossy();
         std::fs::write(dir.join(format!("{name}.png")), preview_png(&g).unwrap()).unwrap();

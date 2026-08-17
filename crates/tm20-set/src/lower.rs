@@ -15,7 +15,7 @@ pub fn lower(sheet: &Sheet<'_>, faces: &FaceTable) -> Result<Document, Error> {
         Command::Graphics(graphics),
         Command::Feed { lines: 3 },
         Command::Cut {
-            kind: CutKind::Partial,
+            kind: CutKind::Full,
         },
     ]))
 }

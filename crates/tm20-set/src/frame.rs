@@ -292,12 +292,13 @@ fn bitmap(width: u16, height: u16, bits: Vec<bool>) -> Result<(u16, u16, Vec<boo
     Ok((width, height, bits))
 }
 
-/// Photograph. Always scaled to the measure, flush left. `true` is black.
+/// Photograph. Native size, flush left; shrinks if wider than the measure. `true` is black.
 #[derive(Clone)]
 pub struct Figure {
     pub width: u16,
     pub height: u16,
     pub bits: Vec<bool>,
+    pub note: Option<NonZeroU32>,
 }
 
 impl Figure {
@@ -307,27 +308,23 @@ impl Figure {
             width,
             height,
             bits,
+            note: None,
         })
     }
 
-    /// Decode PNG or JPEG, scale to `measure` flush left, Floyd–Steinberg to 1-bit.
+    /// Decode PNG or JPEG at native size. Shrink if wider than `measure`; never scale up.
+    /// Floyd–Steinberg to 1-bit after the size is settled.
     pub fn from_image(bytes: &[u8], measure: u16) -> Result<Self, Error> {
-        if measure == 0 {
-            return Err(Error::Image);
-        }
-        let img = image::load_from_memory(bytes).map_err(|_| Error::Image)?;
-        let luma = img.to_luma8();
-        let (src_w, src_h) = luma.dimensions();
-        if src_w == 0 || src_h == 0 {
-            return Err(Error::Image);
-        }
-        let dst_w = u32::from(measure);
-        let dst_h = ((src_h as f32 * dst_w as f32 / src_w as f32).round() as u32).max(1);
-        let resized =
-            image::imageops::resize(&luma, dst_w, dst_h, image::imageops::FilterType::Triangle);
-        let samples: Vec<f32> = resized.pixels().map(|p| p.0[0] as f32).collect();
-        let bits = floyd_steinberg(dst_w, dst_h, samples);
-        Self::from_bits(dst_w as u16, dst_h as u16, bits)
+        let luma = decode_luma(bytes)?;
+        let (w, h, samples) = fit_luma(&luma, measure)?;
+        let bits = floyd_steinberg(w, h, samples);
+        Self::from_bits(w as u16, h as u16, bits)
+    }
+
+    #[must_use]
+    pub fn noted(mut self, n: NonZeroU32) -> Self {
+        self.note = Some(n);
+        self
     }
 }
 
@@ -354,31 +351,42 @@ impl Math {
 
     /// Decode PNG at native size. Shrink if wider than `max_w`; never scale up.
     pub fn from_png(bytes: &[u8], max_w: u16, ascent: u16) -> Result<Self, Error> {
-        if max_w == 0 {
-            return Err(Error::Image);
-        }
-        let img = image::load_from_memory(bytes).map_err(|_| Error::Image)?;
-        let luma = img.to_luma8();
-        let (src_w, src_h) = luma.dimensions();
-        if src_w == 0 || src_h == 0 {
-            return Err(Error::Image);
-        }
-        let max_w = u32::from(max_w);
-        let (dst_w, dst_h, samples, ascent) = if src_w > max_w {
-            let dst_w = max_w;
-            let dst_h = ((src_h as f32 * dst_w as f32 / src_w as f32).round() as u32).max(1);
-            let resized =
-                image::imageops::resize(&luma, dst_w, dst_h, image::imageops::FilterType::Triangle);
-            let scale = dst_w as f32 / src_w as f32;
-            let ascent = ((ascent as f32 * scale).round() as u16).min(dst_h as u16);
-            let samples: Vec<f32> = resized.pixels().map(|p| p.0[0] as f32).collect();
-            (dst_w, dst_h, samples, ascent)
-        } else {
-            let samples: Vec<f32> = luma.pixels().map(|p| p.0[0] as f32).collect();
-            (src_w, src_h, samples, ascent.min(src_h as u16))
-        };
+        let luma = decode_luma(bytes)?;
+        let src_w = luma.width();
+        let (dst_w, dst_h, samples) = fit_luma(&luma, max_w)?;
+        let scale = dst_w as f32 / src_w as f32;
+        let ascent = ((ascent as f32 * scale).round() as u16).min(dst_h as u16);
         let bits = floyd_steinberg(dst_w, dst_h, samples);
         Self::from_bits(dst_w as u16, dst_h as u16, bits, ascent)
+    }
+}
+
+fn decode_luma(bytes: &[u8]) -> Result<image::GrayImage, Error> {
+    let img = image::load_from_memory(bytes).map_err(|_| Error::Image)?;
+    let luma = img.to_luma8();
+    if luma.width() == 0 || luma.height() == 0 {
+        return Err(Error::Image);
+    }
+    Ok(luma)
+}
+
+/// Native size if it already fits `max_w`. Otherwise shrink. Never scale up.
+fn fit_luma(luma: &image::GrayImage, max_w: u16) -> Result<(u32, u32, Vec<f32>), Error> {
+    if max_w == 0 {
+        return Err(Error::Image);
+    }
+    let (src_w, src_h) = luma.dimensions();
+    let max_w = u32::from(max_w);
+    if src_w <= max_w {
+        let samples: Vec<f32> = luma.pixels().map(|p| p.0[0] as f32).collect();
+        Ok((src_w, src_h, samples))
+    } else {
+        let dst_w = max_w;
+        let dst_h = ((src_h as f32 * dst_w as f32 / src_w as f32).round() as u32).max(1);
+        let resized =
+            image::imageops::resize(luma, dst_w, dst_h, image::imageops::FilterType::Triangle);
+        let samples: Vec<f32> = resized.pixels().map(|p| p.0[0] as f32).collect();
+        Ok((dst_w, dst_h, samples))
     }
 }
 
@@ -423,10 +431,22 @@ pub enum Frame<'a> {
     Rule(Rule),
 }
 
-/// One slot in the sheet’s note apparatus. Links and footnotes share the numbers.
+/// One slot in the sheet’s note apparatus. Links, captions, and footnotes share the numbers.
 pub enum Note<'a> {
-    Dest(Cow<'a, str>),
+    Dest {
+        dest: Cow<'a, str>,
+        title: Option<Cow<'a, str>>,
+    },
     Blocks(Vec<Frame<'a>>),
+}
+
+impl<'a> Note<'a> {
+    pub fn dest(dest: impl Into<Cow<'a, str>>) -> Self {
+        Self::Dest {
+            dest: dest.into(),
+            title: None,
+        }
+    }
 }
 
 /// Authoring document. Compiles to one `Graphics`.
@@ -470,16 +490,39 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn figure_from_image_fits_the_measure() {
-        let img = image::GrayImage::from_pixel(1, 1, image::Luma([0]));
+    fn gray_png(w: u32, h: u32) -> Vec<u8> {
+        let img = image::GrayImage::from_pixel(w, h, image::Luma([0]));
         let mut buf = Vec::new();
         img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
             .unwrap();
-        let fig = Figure::from_image(&buf, 16).unwrap();
-        assert_eq!(fig.width, 16);
-        assert!(fig.height >= 1);
+        buf
+    }
+
+    #[test]
+    fn figure_keeps_native_size() {
+        let fig = Figure::from_image(&gray_png(8, 4), 16).unwrap();
+        assert_eq!(fig.width, 8);
+        assert_eq!(fig.height, 4);
         assert!(fig.bits.iter().any(|&b| b));
+    }
+
+    #[test]
+    fn figure_already_the_measure_is_untouched() {
+        let fig = Figure::from_image(&gray_png(8, 4), 8).unwrap();
+        assert_eq!(fig.width, 8);
+        assert_eq!(fig.height, 4);
+    }
+
+    #[test]
+    fn figure_shrinks_to_the_measure() {
+        let fig = Figure::from_image(&gray_png(8, 4), 4).unwrap();
+        assert_eq!(fig.width, 4);
+        assert_eq!(fig.height, 2);
+    }
+
+    #[test]
+    fn figure_rejects_empty_measure_and_garbage() {
+        let buf = gray_png(1, 1);
         assert!(matches!(Figure::from_image(&buf, 0), Err(Error::Image)));
         assert!(matches!(
             Figure::from_image(&[0xff; 8], 16),

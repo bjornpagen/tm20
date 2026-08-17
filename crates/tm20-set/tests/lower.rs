@@ -23,7 +23,7 @@ fn lower_is_init_page_graphics_feed_cut() {
             Command::Graphics(g),
             Command::Feed { lines: 3 },
             Command::Cut {
-                kind: CutKind::Partial,
+                kind: CutKind::Full,
             },
         ] => {
             assert_eq!(g.width_dots, PRINTABLE_DOTS);
@@ -40,4 +40,12 @@ fn lower_is_init_page_graphics_feed_cut() {
     let bytes = encode(&doc).unwrap();
     assert_eq!(&bytes[..2], &[0x1b, 0x40]);
     assert!(bytes.windows(3).any(|w| w == [0x1d, b'(', b'L']));
+    assert!(
+        bytes.windows(3).any(|w| w == [0x1d, b'V', b'A']),
+        "job ends in a full cut (GS V A)"
+    );
+    assert!(
+        !bytes.windows(3).any(|w| w == [0x1d, b'V', b'B']),
+        "job must not partial-cut"
+    );
 }

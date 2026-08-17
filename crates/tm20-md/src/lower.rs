@@ -29,7 +29,8 @@ fn options() -> Options<'static> {
 }
 
 /// Lower `markdown` to a tape-wide [`Sheet`]. `load` resolves image destinations
-/// to bytes (relative files). HTTP is the caller’s choice to reject.
+/// to bytes. [`crate::image_bytes`] reads relative and `file:` URLs from disk;
+/// HTTP is the caller’s choice to reject.
 pub fn sheet(
     markdown: &str,
     measure: Measure,
@@ -56,7 +57,8 @@ pub fn sheet(
 }
 
 enum Slot {
-    Dest(String),
+    Dest { dest: String, title: Option<String> },
+    Caption(String),
     Foot(String),
 }
 
@@ -250,7 +252,11 @@ where
             && let NodeValue::Image(link) = &kids[0].data.borrow().value
         {
             let bytes = (self.load)(link.url.as_ref())?;
-            let fig = Figure::from_image(&bytes, self.measure)?;
+            let mut fig = Figure::from_image(&bytes, self.measure)?;
+            let alt = flatten(kids[0]);
+            if let Some(n) = self.note_for_caption(&alt) {
+                fig = fig.noted(n);
+            }
             return Ok(vec![Frame::Figure(fig)]);
         }
         if kids
@@ -371,7 +377,7 @@ where
                         Span::Math(_) => "",
                     })
                     .collect();
-                let dest_note = self.note_for_dest(&link.url, &text);
+                let dest_note = self.note_for_dest(&link.url, &text, &link.title);
                 if inner_spans.is_empty() {
                     inner_spans.push(Span::Type {
                         cut: cut(inner),
@@ -412,24 +418,53 @@ where
         Ok(())
     }
 
-    fn note_for_dest(&mut self, dest: &str, text: &str) -> Option<NonZeroU32> {
-        if dest.is_empty() || dest == text {
+    fn note_for_dest(&mut self, dest: &str, text: &str, title: &str) -> Option<NonZeroU32> {
+        let (stored, force) = match dest.strip_prefix("mailto:") {
+            Some(addr) if !addr.is_empty() => (addr.to_string(), true),
+            _ => (dest.to_string(), false),
+        };
+        if stored.is_empty() {
+            return None;
+        }
+        if !force && dest == text {
             return None;
         }
         if let Some(i) = self.slots.iter().position(|s| match s {
-            Slot::Dest(d) => d == dest,
-            Slot::Foot(_) => false,
+            Slot::Dest { dest: d, .. } => d == &stored,
+            _ => false,
         }) {
             return NonZeroU32::new(i as u32 + 1);
         }
-        self.slots.push(Slot::Dest(dest.to_string()));
+        let title = if title.is_empty() {
+            None
+        } else {
+            Some(title.to_string())
+        };
+        self.slots.push(Slot::Dest {
+            dest: stored,
+            title,
+        });
+        NonZeroU32::new(self.slots.len() as u32)
+    }
+
+    fn note_for_caption(&mut self, alt: &str) -> Option<NonZeroU32> {
+        if alt.is_empty() {
+            return None;
+        }
+        if let Some(i) = self.slots.iter().position(|s| match s {
+            Slot::Caption(a) => a == alt,
+            _ => false,
+        }) {
+            return NonZeroU32::new(i as u32 + 1);
+        }
+        self.slots.push(Slot::Caption(alt.to_string()));
         NonZeroU32::new(self.slots.len() as u32)
     }
 
     fn note_for_foot(&mut self, name: &str) -> NonZeroU32 {
         if let Some(i) = self.slots.iter().position(|s| match s {
             Slot::Foot(n) => n == name,
-            Slot::Dest(_) => false,
+            _ => false,
         }) {
             return NonZeroU32::new(i as u32 + 1).unwrap();
         }
@@ -442,7 +477,11 @@ where
         self.slots
             .into_iter()
             .map(|s| match s {
-                Slot::Dest(d) => Ok(Note::Dest(d.into())),
+                Slot::Dest { dest, title } => Ok(Note::Dest {
+                    dest: dest.into(),
+                    title: title.map(Into::into),
+                }),
+                Slot::Caption(alt) => Ok(Note::dest(alt)),
                 Slot::Foot(name) => {
                     let frames = defs.remove(&name).ok_or(Error::Note)?;
                     Ok(Note::Blocks(frames))

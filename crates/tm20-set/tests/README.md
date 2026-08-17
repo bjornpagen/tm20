@@ -11,7 +11,7 @@ proofs live in `tests/`. Each test is one fact.
 
 - **`size`** — 11 pt = 31 dots, Plus2 skip 37; 8 pt Plus2 29; display 18 solid 51
 - **`leading`** — `GridSkip` on 8; Plus1 at 11 pt is 34; Solid equals body; `TASK_BOX` 24; `NOTE_RULE` 144
-- **`frame`** — `Measure::new(0)` is none; ragged figure bits and bad image bytes error; PNG scales to the measure
+- **`frame`** — `Measure::new(0)` is none; ragged figure bits and bad image bytes error; PNG keeps native size and shrinks if wider than the measure
 - **`face`** — garbage bytes are `Error::Font`
 
 ## Compose (`algebra.rs`)
@@ -24,7 +24,7 @@ Every `Frame` variant lowers and encodes. Mixed cuts live on the `Text` case. A 
 
 ## Lower (`lower.rs`)
 
-Init, PC437, Graphics, Feed 3, partial cut. No `PrintSpeed`. Bytes start with `ESC @` and contain `GS ( L`.
+Init, PC437, Graphics, Feed 3, full cut. No `PrintSpeed`. Bytes start with `ESC @` and contain `GS ( L`.
 
 ## Residuals the engine still chooses
 

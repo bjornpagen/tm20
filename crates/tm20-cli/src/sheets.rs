@@ -282,8 +282,8 @@ fn suite() -> Result<Document> {
         Frame::Figure(pig),
     ]);
     sheet.notes = vec![
-        Note::Dest("https://www.vignelli.com/canon.pdf".into()),
-        Note::Dest("Ruder, Typographie".into()),
+        Note::dest("https://www.vignelli.com/canon.pdf"),
+        Note::dest("Ruder, Typographie"),
     ];
     Ok(tm20_set::lower(&sheet, &faces)?)
 }

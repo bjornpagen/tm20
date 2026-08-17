@@ -452,6 +452,25 @@ fn paint_figure(cx: &mut Cx<'_, '_>, fig: &Figure, x0: u16, _measure: u16) -> Re
     blit_bits(
         cx.canvas, x0 as i32, top as i32, fig.width, fig.height, &fig.bits,
     );
+    if let Some(n) = fig.note {
+        let nf = cx.faces.text(Cut::Roman)?;
+        let label = n.get().to_string();
+        let shaped_note = nf.shape(&label, TextSize::Pt8);
+        let px8 = TextFace::px(TextSize::Pt8);
+        let raise = px8 * NOTE_RAISE;
+        let mut x = x0 as f32 + fig.width as f32;
+        if x + shaped_note.width > cx.canvas.width as f32 {
+            x = (cx.canvas.width as f32 - shaped_note.width).max(x0 as f32);
+        }
+        blit(
+            cx.canvas,
+            nf.inner(),
+            px8,
+            x,
+            top as f32 + px8 - raise,
+            &shaped_note,
+        );
+    }
     let bottom = top as f32 + fig.height as f32;
     cx.cur.place = Place::Line {
         baseline: bottom,
@@ -532,8 +551,12 @@ fn paint_notes(cx: &mut Cx<'_, '_>, width: u16, notes: &[Note<'_>]) -> Result<()
         }));
         cx.cur.last = Some(Rhythm::Hang);
         match note {
-            Note::Dest(d) => {
-                let frame = Frame::Text(TextBlock::plain(Cut::Roman, size, d.as_ref()));
+            Note::Dest { dest, title } => {
+                let body = match title {
+                    Some(t) => format!("{t}\n{dest}"),
+                    None => dest.as_ref().to_string(),
+                };
+                let frame = Frame::Text(TextBlock::plain(Cut::Roman, size, body));
                 paint_seq(cx, &[frame], content_x, content_w, 0, 1)?;
             }
             Note::Blocks(frames) => {

@@ -1004,7 +1004,7 @@ fn notes_follow_the_frames() {
         size: TextSize::Pt11,
         spans: vec![span],
     })]);
-    sheet.notes.push(Note::Dest("https://example.com".into()));
+    sheet.notes.push(Note::dest("https://example.com"));
     let g = compose(&sheet, &faces).unwrap();
     let mut rule = false;
     for y in 0..g.height_dots as usize {
@@ -1031,7 +1031,7 @@ fn notes_rule_has_two_points_of_air() {
         size: TextSize::Pt11,
         spans: vec![span],
     })]);
-    sheet.notes.push(Note::Dest("https://example.com".into()));
+    sheet.notes.push(Note::dest("https://example.com"));
     let g = compose(&sheet, &faces).unwrap();
     let mut rule_y = None;
     for y in 0..g.height_dots as usize {
@@ -1073,6 +1073,60 @@ fn notes_rule_has_two_points_of_air() {
 }
 
 #[test]
+fn dest_title_is_two_lines() {
+    let faces = common::table();
+    let g1 = {
+        let span = Span::new(Cut::Italic, "Canon").noted(std::num::NonZeroU32::new(1).unwrap());
+        let mut sheet = Sheet::tape(vec![Frame::Text(TextBlock {
+            size: TextSize::Pt11,
+            spans: vec![span],
+        })]);
+        sheet.notes.push(Note::dest("https://example.com"));
+        compose(&sheet, &faces).unwrap()
+    };
+    let g2 = {
+        let span = Span::new(Cut::Italic, "Canon").noted(std::num::NonZeroU32::new(1).unwrap());
+        let mut sheet = Sheet::tape(vec![Frame::Text(TextBlock {
+            size: TextSize::Pt11,
+            spans: vec![span],
+        })]);
+        sheet.notes.push(Note::Dest {
+            dest: "https://example.com".into(),
+            title: Some("The Canon".into()),
+        });
+        compose(&sheet, &faces).unwrap()
+    };
+    assert!(
+        g2.height_dots > g1.height_dots,
+        "title then dest is taller than dest alone ({} vs {})",
+        g2.height_dots,
+        g1.height_dots
+    );
+}
+
+#[test]
+fn figure_note_has_raised_ink() {
+    let faces = common::table();
+    let bits = vec![true; 8 * 8];
+    let fig = Figure::from_bits(8, 8, bits)
+        .unwrap()
+        .noted(std::num::NonZeroU32::new(1).unwrap());
+    let mut sheet = Sheet::tape(vec![Frame::Figure(fig)]);
+    sheet.notes.push(Note::dest("grid"));
+    let g = compose(&sheet, &faces).unwrap();
+    let mut after = false;
+    let max_y = 16.min(g.height_dots as usize);
+    for y in 0..max_y {
+        for x in 8..g.width_dots {
+            if packed_ink(&g, y, x) {
+                after = true;
+            }
+        }
+    }
+    assert!(after, "note sits after the bitmap");
+}
+
+#[test]
 fn preview_png_is_a_png() {
     let faces = common::table();
     let g = compose(&Sheet::tape(vec![text("H")]), &faces).unwrap();
@@ -1107,7 +1161,7 @@ fn dump_preview_pngs() {
         size: TextSize::Pt11,
         spans: vec![span],
     })];
-    notes.notes.push(Note::Dest("https://example.com".into()));
+    notes.notes.push(Note::dest("https://example.com"));
     let both = Frame::Text(TextBlock {
         size: TextSize::Pt11,
         spans: vec![
