@@ -9,7 +9,7 @@ use sheets::{catalog, find};
 use tm20::command::Command;
 use tm20::encode::encode;
 use tm20::{Transport, Usb};
-use tm20_set::{Measure, preview_png};
+use tm20_set::{Measure, preview_pngs};
 
 use crate::kit::system_table;
 
@@ -173,12 +173,25 @@ fn print_md(path: &str, serial: Option<&str>, dry: bool, png: Option<&str>) -> R
     }
     let (bytes, doc) = md_job(path)?;
     eprintln!("md: {}", path.display());
+    let name = path.file_stem().unwrap().to_string_lossy();
+    write_png(png, &name, &doc)?;
     if dry {
+        let heights: Vec<_> = doc
+            .commands()
+            .iter()
+            .filter_map(|c| match c {
+                Command::Graphics(g) => Some(g.height_dots),
+                _ => None,
+            })
+            .collect();
+        let h: u32 = heights.iter().map(|h| u32::from(*h)).sum();
+        eprintln!(
+            "graphics: {} band(s), heights {heights:?}, H={h}",
+            heights.len()
+        );
         println!("{}", bytes.len());
         return Ok(());
     }
-    let name = path.file_stem().unwrap().to_string_lossy();
-    write_png(png, &name, &doc)?;
     Usb::open(serial)?.write(&bytes)?;
     Ok(())
 }
@@ -187,16 +200,20 @@ fn write_png(dir: Option<&str>, name: &str, doc: &tm20::Document) -> Result<()> 
     let Some(dir) = dir else {
         return Ok(());
     };
-    let g = doc.commands().iter().find_map(|c| match c {
-        Command::Graphics(g) => Some(g),
-        _ => None,
-    });
-    let Some(g) = g else {
+    let gs: Vec<_> = doc
+        .commands()
+        .iter()
+        .filter_map(|c| match c {
+            Command::Graphics(g) => Some(g),
+            _ => None,
+        })
+        .collect();
+    if gs.is_empty() {
         return Ok(());
-    };
+    }
     std::fs::create_dir_all(dir)?;
     let path = Path::new(dir).join(format!("{name}.png"));
-    std::fs::write(&path, preview_png(g)?)?;
+    std::fs::write(&path, preview_pngs(gs)?)?;
     eprintln!("png: {}", path.display());
     Ok(())
 }
@@ -204,9 +221,7 @@ fn write_png(dir: Option<&str>, name: &str, doc: &tm20::Document) -> Result<()> 
 fn md_job(path: &Path) -> Result<(Vec<u8>, tm20::Document)> {
     let src = std::fs::read_to_string(path)?;
     let base = path.parent().unwrap_or_else(|| Path::new("."));
-    let sheet = tm20_md::sheet(&src, Measure::TAPE, |dest| {
-        tm20_md::image_bytes(base, dest)
-    })?;
+    let sheet = tm20_md::sheet(&src, Measure::TAPE, |dest| tm20_md::image_bytes(base, dest))?;
     let faces = system_table()?;
     let doc = tm20_set::lower(&sheet, &faces)?;
     Ok((encode(&doc)?, doc))

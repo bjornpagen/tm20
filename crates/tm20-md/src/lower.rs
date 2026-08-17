@@ -58,7 +58,6 @@ pub fn sheet(
 
 enum Slot {
     Dest { dest: String, title: Option<String> },
-    Caption(String),
     Foot(String),
 }
 
@@ -252,11 +251,7 @@ where
             && let NodeValue::Image(link) = &kids[0].data.borrow().value
         {
             let bytes = (self.load)(link.url.as_ref())?;
-            let mut fig = Figure::from_image(&bytes, self.measure)?;
-            let alt = flatten(kids[0]);
-            if let Some(n) = self.note_for_caption(&alt) {
-                fig = fig.noted(n);
-            }
+            let fig = Figure::from_image(&bytes, self.measure)?;
             return Ok(vec![Frame::Figure(fig)]);
         }
         if kids
@@ -419,19 +414,19 @@ where
     }
 
     fn note_for_dest(&mut self, dest: &str, text: &str, title: &str) -> Option<NonZeroU32> {
-        let (stored, force) = match dest.strip_prefix("mailto:") {
-            Some(addr) if !addr.is_empty() => (addr.to_string(), true),
-            _ => (dest.to_string(), false),
+        let stored = match dest.strip_prefix("mailto:") {
+            Some(addr) if !addr.is_empty() => addr.to_string(),
+            _ => dest.to_string(),
         };
         if stored.is_empty() {
             return None;
         }
-        if !force && dest == text {
+        if title.is_empty() && (dest == text || stored == text) {
             return None;
         }
         if let Some(i) = self.slots.iter().position(|s| match s {
             Slot::Dest { dest: d, .. } => d == &stored,
-            _ => false,
+            Slot::Foot(_) => false,
         }) {
             return NonZeroU32::new(i as u32 + 1);
         }
@@ -447,24 +442,10 @@ where
         NonZeroU32::new(self.slots.len() as u32)
     }
 
-    fn note_for_caption(&mut self, alt: &str) -> Option<NonZeroU32> {
-        if alt.is_empty() {
-            return None;
-        }
-        if let Some(i) = self.slots.iter().position(|s| match s {
-            Slot::Caption(a) => a == alt,
-            _ => false,
-        }) {
-            return NonZeroU32::new(i as u32 + 1);
-        }
-        self.slots.push(Slot::Caption(alt.to_string()));
-        NonZeroU32::new(self.slots.len() as u32)
-    }
-
     fn note_for_foot(&mut self, name: &str) -> NonZeroU32 {
         if let Some(i) = self.slots.iter().position(|s| match s {
             Slot::Foot(n) => n == name,
-            _ => false,
+            Slot::Dest { .. } => false,
         }) {
             return NonZeroU32::new(i as u32 + 1).unwrap();
         }
@@ -481,7 +462,6 @@ where
                     dest: dest.into(),
                     title: title.map(Into::into),
                 }),
-                Slot::Caption(alt) => Ok(Note::dest(alt)),
                 Slot::Foot(name) => {
                     let frames = defs.remove(&name).ok_or(Error::Note)?;
                     Ok(Note::Blocks(frames))

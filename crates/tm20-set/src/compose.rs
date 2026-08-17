@@ -1,4 +1,5 @@
-//! Small evaluator: [`Sheet`] + [`FaceTable`] → packed [`tm20::Graphics`].
+//! Small evaluator: [`Sheet`] + [`FaceTable`] → a tape-wide raster, packed as
+//! one or more [`tm20::Graphics`].
 
 use std::num::NonZeroU32;
 
@@ -9,8 +10,8 @@ use crate::frame::{
     MarkAlign, Marker, Math, Note, Quote, Rule, Sheet, TextBlock, Thickness, decimal_text,
 };
 use crate::leading::{GRID, HANG, NOTE_RULE, TASK_BOX, pt_dots};
-use crate::size::TextSize;
-use tm20::graphics::{Graphics, GraphicsScale, pack};
+use crate::size::{DisplaySize, TextSize};
+use tm20::graphics::{Graphics, GraphicsScale, max_height, pack};
 
 const THRESHOLD: u8 = 96;
 const NEST_CAP: u8 = 3;
@@ -20,6 +21,7 @@ struct Canvas {
     width: u16,
     height: u16,
     bits: Vec<bool>,
+    seams: Vec<u16>,
 }
 
 impl Canvas {
@@ -28,7 +30,16 @@ impl Canvas {
             width,
             height: 0,
             bits: Vec::new(),
+            seams: Vec::new(),
         }
+    }
+
+    fn record_seam(&mut self, y: u16) {
+        if y == 0 {
+            return;
+        }
+        self.ensure(y);
+        self.seams.push(y);
     }
 
     fn ensure(&mut self, h: u16) {
@@ -60,22 +71,89 @@ impl Canvas {
         }
     }
 
-    fn into_graphics(self) -> Result<Graphics, Error> {
-        let height = self.height.max(1);
-        let width = self.width;
-        let mut bits = self.bits;
-        bits.resize(width as usize * height as usize, false);
-        let pixels = pack(width, height, &bits).map_err(|_| Error::Overflow {
-            width: width as u32,
-            height: height as u32,
-        })?;
-        Ok(Graphics {
-            width_dots: width,
-            height_dots: height,
-            pixels,
-            scale: GraphicsScale::Normal,
-        })
+    fn finish(mut self, slug_bottom: f32) -> Self {
+        let y = self.height.max(slug_bottom.ceil().max(0.0) as u16).max(1);
+        self.ensure(y);
+        self.seams.push(y);
+        self
     }
+
+    fn pack_full(self) -> Result<Graphics, Error> {
+        let Canvas {
+            width,
+            height,
+            mut bits,
+            ..
+        } = self;
+        let height = height.max(1);
+        bits.resize(width as usize * height as usize, false);
+        pack_slice(width, height, &bits)
+    }
+
+    fn into_bands(self) -> Result<Vec<Graphics>, Error> {
+        let Canvas {
+            width,
+            height,
+            mut bits,
+            mut seams,
+        } = self;
+        let height = height.max(1);
+        bits.resize(width as usize * height as usize, false);
+        seams.push(height);
+        seams.sort_unstable();
+        seams.dedup();
+        seams.retain(|&y| y > 0 && y <= height);
+        let cap = max_height(width).max(1);
+        let ranges = pack_bands(height, cap, &seams);
+        let mut out = Vec::with_capacity(ranges.len());
+        let stride = width as usize;
+        for (start, end) in ranges {
+            let h = end - start;
+            let row0 = start as usize * stride;
+            let row1 = end as usize * stride;
+            out.push(pack_slice(width, h, &bits[row0..row1])?);
+        }
+        Ok(out)
+    }
+}
+
+fn pack_slice(width: u16, height: u16, bits: &[bool]) -> Result<Graphics, Error> {
+    let pixels = pack(width, height, bits).map_err(|_| Error::Overflow {
+        width: width as u32,
+        height: height as u32,
+    })?;
+    Ok(Graphics {
+        width_dots: width,
+        height_dots: height,
+        pixels,
+        scale: GraphicsScale::Normal,
+    })
+}
+
+/// Partition `0..h` into the fewest bands of height ≤ `cap`.
+/// Among cuts that keep that count, take the latest seam in each window.
+fn pack_bands(h: u16, cap: u16, seams: &[u16]) -> Vec<(u16, u16)> {
+    let h = u32::from(h.max(1));
+    let cap = u32::from(cap.max(1));
+    let n = h.div_ceil(cap);
+    let mut bands = Vec::new();
+    let mut start = 0u32;
+    let mut remaining = n;
+    while start < h {
+        remaining -= 1;
+        let lo = (start + 1).max(h.saturating_sub(remaining * cap));
+        let hi = (start + cap).min(h);
+        let s = seams
+            .iter()
+            .copied()
+            .map(u32::from)
+            .filter(|&y| y >= lo && y <= hi)
+            .max()
+            .unwrap_or(hi);
+        bands.push((start as u16, s as u16));
+        start = s;
+    }
+    bands
 }
 
 /// Last completed frame’s adjacency class. `Place` is only geometry.
@@ -265,20 +343,52 @@ struct Cx<'a, 'f> {
 
 /// Layout `sheet` onto one 1-bit canvas and pack it.
 pub fn compose(sheet: &Sheet<'_>, faces: &FaceTable) -> Result<Graphics, Error> {
+    paint(sheet, faces)?.pack_full()
+}
+
+/// Layout `sheet` and slice it into the fewest fn=112 payloads.
+pub(crate) fn compose_bands(sheet: &Sheet<'_>, faces: &FaceTable) -> Result<Vec<Graphics>, Error> {
+    paint(sheet, faces)?.into_bands()
+}
+
+fn paint(sheet: &Sheet<'_>, faces: &FaceTable) -> Result<Canvas, Error> {
     let width = sheet.width.get();
     let mut canvas = Canvas::new(width);
     let mut cur = Cursor::new();
-    let mut cx = Cx {
-        canvas: &mut canvas,
-        cur: &mut cur,
-        faces,
-        pending: Vec::new(),
-    };
-    paint_seq(&mut cx, &sheet.frames, 0, width, 0, 0)?;
-    if !sheet.notes.is_empty() {
-        paint_notes(&mut cx, width, &sheet.notes)?;
+    {
+        let mut cx = Cx {
+            canvas: &mut canvas,
+            cur: &mut cur,
+            faces,
+            pending: Vec::new(),
+        };
+        paint_seq(&mut cx, &sheet.frames, 0, width, 0, 0)?;
+        if !sheet.notes.is_empty() {
+            paint_notes(&mut cx, width, &sheet.notes)?;
+        }
     }
-    canvas.into_graphics()
+    Ok(canvas.finish(cur.slug_bottom()))
+}
+
+fn seam(cx: &mut Cx<'_, '_>) {
+    let y = cx.cur.slug_bottom().ceil().max(0.0) as u16;
+    cx.canvas.record_seam(y);
+}
+
+fn grid_seams_through(cx: &mut Cx<'_, '_>, top: u16, bottom: u16) {
+    let cap = max_height(cx.canvas.width).max(1);
+    if bottom.saturating_sub(top) <= cap {
+        return;
+    }
+    let mut y = top.saturating_add(GRID);
+    while y < bottom {
+        cx.canvas.record_seam(y);
+        let next = y.saturating_add(GRID);
+        if next <= y {
+            break;
+        }
+        y = next;
+    }
 }
 
 fn paint_seq(
@@ -314,7 +424,7 @@ fn paint_one(
     match frame {
         Frame::Rule(rule) => paint_rule(cx, rule, x0, measure),
         Frame::Mark(mark) => paint_mark(cx, mark, x0, measure),
-        Frame::Text(block) => paint_run(cx, block, x0, measure),
+        Frame::Text(block) => paint_run(cx, block, x0, measure, true),
         Frame::Head(head) => paint_head(cx, head, x0, measure),
         Frame::Cols(cols) => paint_cols(cx, cols, x0, measure),
         Frame::List(list) => paint_list(cx, list, x0, measure, quote_depth, list_depth),
@@ -333,6 +443,7 @@ fn paint_rule(cx: &mut Cx<'_, '_>, rule: &Rule, x0: u16, measure: u16) -> Result
         cx.canvas.fill_row(y + dy, x0, x1);
     }
     cx.cur.set_rule((y + rule.thickness.dots()) as f32);
+    seam(cx);
     Ok(())
 }
 
@@ -344,30 +455,109 @@ fn paint_mark(
 ) -> Result<(), Error> {
     let faces = cx.faces;
     let face = faces.display(mark.cut)?;
-    let shaped = face.shape(mark.text.as_ref(), mark.size, mark.tracking.0);
     let skip = mark.size.skip_dots();
-    let ascent = shaped_ink_ascent(face.inner(), DisplayFace::px(mark.size), &shaped);
-    cx.cur.mark_slug = skip;
-    let b = cx.cur.first_baseline(ascent, 0.0, skip);
-    flush_marks(cx, b);
-    let x = match mark.align {
-        MarkAlign::Start => x0 as f32,
-        MarkAlign::Center => x0 as f32 + ((measure as f32 - shaped.width) * 0.5).max(0.0),
-    };
-    blit(
-        cx.canvas,
-        face.inner(),
-        DisplayFace::px(mark.size),
-        x,
-        b,
-        &shaped,
+    let px = DisplayFace::px(mark.size);
+    let measure = measure.max(1) as f32;
+    let lines = wrap_mark(
+        face,
+        mark.size,
+        mark.tracking.0,
+        mark.text.as_ref(),
+        measure,
     );
+    cx.cur.mark_slug = skip;
+    for (li, line) in lines.iter().enumerate() {
+        let shaped = face.shape(line, mark.size, mark.tracking.0);
+        let ascent = shaped_ink_ascent(face.inner(), px, &shaped);
+        let b = if li == 0 {
+            cx.cur.first_baseline(ascent, 0.0, skip)
+        } else {
+            cx.cur.later_baseline(ascent, 0.0, skip)
+        };
+        if li == 0 {
+            flush_marks(cx, b);
+        }
+        let x = match mark.align {
+            MarkAlign::Start => x0 as f32,
+            MarkAlign::Center => x0 as f32 + ((measure - shaped.width) * 0.5).max(0.0),
+        };
+        blit(cx.canvas, face.inner(), px, x, b, &shaped);
+        seam(cx);
+    }
     Ok(())
+}
+
+fn wrap_mark(
+    face: &DisplayFace,
+    size: DisplaySize,
+    tracking: i16,
+    text: &str,
+    measure: f32,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for hard in text.split('\n') {
+        let words: Vec<&str> = hard.split(' ').filter(|w| !w.is_empty()).collect();
+        if words.is_empty() {
+            out.push(String::new());
+            continue;
+        }
+        out.extend(wrap_mark_words(face, size, tracking, &words, measure));
+    }
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
+}
+
+fn wrap_mark_words(
+    face: &DisplayFace,
+    size: DisplaySize,
+    tracking: i16,
+    words: &[&str],
+    measure: f32,
+) -> Vec<String> {
+    let n = words.len();
+    let width = |i: usize, j: usize| face.shape(&words[i..j].join(" "), size, tracking).width;
+    let mut dp = vec![f64::INFINITY; n + 1];
+    let mut prev = vec![0usize; n + 1];
+    dp[0] = 0.0;
+    for j in 1..=n {
+        for i in (0..j).rev() {
+            let w = width(i, j);
+            if w > measure && j - i > 1 {
+                break;
+            }
+            let n_boxes = j - i;
+            let last = j == n;
+            let cost = if w > measure || (last && n_boxes >= 2) {
+                0.0
+            } else {
+                let r = (measure - w) as f64;
+                r * r
+            };
+            let total = dp[i] + cost;
+            if total <= dp[j] {
+                dp[j] = total;
+                prev[j] = i;
+            }
+        }
+    }
+    let mut ends = Vec::new();
+    let mut j = n;
+    while j > 0 {
+        let i = prev[j];
+        ends.push((i, j));
+        j = i;
+    }
+    ends.reverse();
+    ends.into_iter()
+        .map(|(i, j)| words[i..j].join(" "))
+        .collect()
 }
 
 fn paint_head(cx: &mut Cx<'_, '_>, head: &Head<'_>, x0: u16, measure: u16) -> Result<(), Error> {
     let block = TextBlock::plain(Cut::Bold, head.size, head.text.as_ref());
-    paint_run(cx, &block, x0, measure)
+    paint_run(cx, &block, x0, measure, false)
 }
 
 fn paint_run(
@@ -375,6 +565,7 @@ fn paint_run(
     block: &TextBlock<'_>,
     x0: u16,
     measure: u16,
+    split: bool,
 ) -> Result<(), Error> {
     let measure = measure.max(1);
     let skip = block.size.skip_dots();
@@ -396,6 +587,9 @@ fn paint_run(
             flush_marks(cx, b);
         }
         paint_line(cx, block.size, x0 as f32, b, line)?;
+        if split {
+            seam(cx);
+        }
     }
     Ok(())
 }
@@ -441,16 +635,19 @@ fn paint_code(cx: &mut Cx<'_, '_>, code: &Code<'_>, x0: u16, _measure: u16) -> R
             flush_marks(cx, b);
         }
         blit(cx.canvas, face.inner(), px, x, b, &shaped);
+        seam(cx);
     }
     Ok(())
 }
 
-fn paint_figure(cx: &mut Cx<'_, '_>, fig: &Figure, x0: u16, _measure: u16) -> Result<(), Error> {
+fn paint_figure(cx: &mut Cx<'_, '_>, fig: &Figure, x0: u16, measure: u16) -> Result<(), Error> {
     let b = cx.cur.first_baseline(0.0, 0.0, GRID);
     flush_marks(cx, b);
     let top = b.round().max(0.0) as u16;
+    let w = fig.width.min(measure);
+    let x = x0.saturating_add(measure.saturating_sub(w) / 2);
     blit_bits(
-        cx.canvas, x0 as i32, top as i32, fig.width, fig.height, &fig.bits,
+        cx.canvas, x as i32, top as i32, fig.width, fig.height, &fig.bits,
     );
     if let Some(n) = fig.note {
         let nf = cx.faces.text(Cut::Roman)?;
@@ -458,24 +655,26 @@ fn paint_figure(cx: &mut Cx<'_, '_>, fig: &Figure, x0: u16, _measure: u16) -> Re
         let shaped_note = nf.shape(&label, TextSize::Pt8);
         let px8 = TextFace::px(TextSize::Pt8);
         let raise = px8 * NOTE_RAISE;
-        let mut x = x0 as f32 + fig.width as f32;
-        if x + shaped_note.width > cx.canvas.width as f32 {
-            x = (cx.canvas.width as f32 - shaped_note.width).max(x0 as f32);
+        let mut nx = x as f32 + fig.width as f32;
+        if nx + shaped_note.width > cx.canvas.width as f32 {
+            nx = (cx.canvas.width as f32 - shaped_note.width).max(x as f32);
         }
         blit(
             cx.canvas,
             nf.inner(),
             px8,
-            x,
+            nx,
             top as f32 + px8 - raise,
             &shaped_note,
         );
     }
     let bottom = top as f32 + fig.height as f32;
+    grid_seams_through(cx, top, bottom as u16);
     cx.cur.place = Place::Line {
         baseline: bottom,
         slug_bottom: bottom + GRID as f32,
     };
+    seam(cx);
     Ok(())
 }
 
@@ -494,10 +693,12 @@ fn paint_math(cx: &mut Cx<'_, '_>, math: &Math, x0: u16, measure: u16) -> Result
         &math.bits,
     );
     let bottom = top as f32 + math.height as f32;
+    grid_seams_through(cx, top, bottom as u16);
     cx.cur.place = Place::Line {
         baseline: bottom,
         slug_bottom: bottom + GRID as f32,
     };
+    seam(cx);
     Ok(())
 }
 
@@ -521,6 +722,7 @@ fn paint_notes(cx: &mut Cx<'_, '_>, width: u16, notes: &[Note<'_>]) -> Result<()
     let x1 = NOTE_RULE.min(width);
     cx.canvas.fill_row(y, 0, x1);
     cx.cur.set_rule((y + Thickness::One.dots()) as f32);
+    seam(cx);
     cx.cur.bump(air);
     let size = TextSize::Pt8;
     let hang_list = List {
@@ -626,6 +828,7 @@ fn paint_list(
             quote_depth,
             list_depth + 1,
         )?;
+        seam(cx);
     }
     Ok(())
 }
@@ -656,18 +859,21 @@ fn paint_grid<const N: usize>(
         return Ok(());
     }
     let gutter = gutter.dots();
-    let gutters = gutter * (N as u16 - 1);
-    let inner = measure.saturating_sub(gutters).max(1);
-    let widths = col_widths(size, align, rows, inner, cx.faces)?;
+    let natural = measure_cols(size, align, rows, cx.faces)?;
+    let placed = crate::cols::layout(natural, x0, measure, gutter, |w| {
+        allocation_cost(size, align, rows, cx.faces, w)
+    })?;
     let skip = size.skip_dots();
     for (ri, row) in rows.iter().enumerate() {
         let mut cell_lines = Vec::with_capacity(N);
-        for (c, cell) in row.iter().enumerate() {
-            let digits = match align[c] {
-                ColAlign::End => Digits::Tabular,
-                ColAlign::Start => Digits::Proportional,
-            };
-            cell_lines.push(wrap_spans(size, cell, widths[c] as f32, cx.faces, digits)?);
+        for (cell, spans) in placed.col.iter().zip(row.iter()) {
+            cell_lines.push(wrap_spans(
+                size,
+                spans,
+                f32::from(cell.width),
+                cx.faces,
+                col_digits(cell.align),
+            )?);
         }
         let nlines = cell_lines.iter().map(|l| l.len().max(1)).max().unwrap_or(1);
         for li in 0..nlines {
@@ -688,78 +894,83 @@ fn paint_grid<const N: usize>(
             if ri == 0 && li == 0 {
                 flush_marks(cx, b);
             }
-            let mut x = x0 as f32;
-            for c in 0..N {
-                if let Some(line) = cell_lines[c].get(li) {
+            for (cell, lines) in placed.col.iter().zip(&cell_lines) {
+                if let Some(line) = lines.get(li) {
                     let notes = note_face_of(cx.faces, line)?;
                     let lw = line_width(size, line, notes);
-                    let lx = if align[c] == ColAlign::End {
-                        x + (widths[c] as f32 - lw).max(0.0)
-                    } else {
-                        x
-                    };
-                    paint_line(cx, size, lx, b, line)?;
+                    paint_line(cx, size, cell.ink_x(lw), b, line)?;
                 }
-                x += widths[c] as f32 + gutter as f32;
             }
         }
+        seam(cx);
     }
     Ok(())
 }
 
-fn col_widths<const N: usize>(
+fn measure_cols<const N: usize>(
     size: TextSize,
     align: &[ColAlign; N],
     rows: &[[Vec<crate::frame::Span<'_>>; N]],
-    inner: u16,
     faces: &FaceTable,
-) -> Result<[u16; N], Error> {
-    let mut widths = [0u16; N];
-    let mut end_sum = 0u16;
-    let mut start_n = 0u16;
-    for (c, col) in align.iter().enumerate() {
-        if *col == ColAlign::Start {
-            start_n += 1;
-            continue;
-        }
-        let mut w = 1u16;
+) -> Result<crate::cols::Natural<N>, Error> {
+    let mut pref = [1u16; N];
+    let mut min = [1u16; N];
+    for c in 0..N {
+        let digits = col_digits(align[c]);
+        let mut p = 1u16;
+        let mut m = 1u16;
         for row in rows {
-            let lines = wrap_spans(size, &row[c], inner as f32, faces, Digits::Tabular)?;
-            let mut lw = 0.0f32;
-            for line in &lines {
-                let notes = note_face_of(faces, line)?;
-                lw = lw.max(line_width(size, line, notes));
-            }
-            w = w.max(lw.ceil().max(1.0) as u16);
+            let (unwrapped, _) = wrap_plan(size, &row[c], 10_000.0, faces, digits)?;
+            p = p.max(max_line_width(size, &unwrapped, faces)?);
+            let (tight, _) = wrap_plan(size, &row[c], 1.0, faces, digits)?;
+            m = m.max(max_line_width(size, &tight, faces)?);
         }
-        w = w.min(inner);
-        widths[c] = w;
-        end_sum = end_sum.saturating_add(w);
+        pref[c] = p.max(1);
+        min[c] = m.min(pref[c]).max(1);
     }
-    if end_sum > inner {
-        let mut used = 0u16;
-        for (c, col) in align.iter().enumerate() {
-            if *col == ColAlign::End {
-                widths[c] = ((widths[c] as u32 * inner as u32) / end_sum.max(1) as u32) as u16;
-                widths[c] = widths[c].max(1);
-                used = used.saturating_add(widths[c]);
-            }
+    Ok(crate::cols::Natural {
+        align: *align,
+        pref,
+        min,
+    })
+}
+
+fn col_digits(align: ColAlign) -> Digits {
+    match align {
+        ColAlign::End => Digits::Tabular,
+        ColAlign::Start => Digits::Proportional,
+    }
+}
+
+fn max_line_width(
+    size: TextSize,
+    lines: &[Vec<LineSpan<'_>>],
+    faces: &FaceTable,
+) -> Result<u16, Error> {
+    let mut w = 1u16;
+    for line in lines {
+        let notes = note_face_of(faces, line)?;
+        w = w.max(line_width(size, line, notes).ceil().max(1.0) as u16);
+    }
+    Ok(w)
+}
+
+fn allocation_cost<const N: usize>(
+    size: TextSize,
+    align: &[ColAlign; N],
+    rows: &[[Vec<crate::frame::Span<'_>>; N]],
+    faces: &FaceTable,
+    widths: &[u16; N],
+) -> Result<f64, Error> {
+    let mut total = 0.0;
+    for (c, w) in widths.iter().enumerate() {
+        let digits = col_digits(align[c]);
+        for row in rows {
+            let (_, cost) = wrap_plan(size, &row[c], f32::from(*w), faces, digits)?;
+            total += cost;
         }
-        end_sum = used;
     }
-    let leftover = inner.saturating_sub(end_sum);
-    if start_n == 0 {
-        return Ok(widths);
-    }
-    let each = (leftover / start_n).max(1);
-    let mut rem = leftover.saturating_sub(each * start_n);
-    for (c, col) in align.iter().enumerate() {
-        if *col == ColAlign::Start {
-            widths[c] = each + u16::from(rem > 0);
-            rem = rem.saturating_sub(1);
-        }
-    }
-    Ok(widths)
+    Ok(total)
 }
 
 fn note_face_of<'f>(
@@ -1005,6 +1216,16 @@ fn wrap_spans<'f>(
     faces: &'f FaceTable,
     digits: Digits,
 ) -> Result<Vec<Vec<LineSpan<'f>>>, Error> {
+    Ok(wrap_plan(size, spans, measure, faces, digits)?.0)
+}
+
+fn wrap_plan<'f>(
+    size: TextSize,
+    spans: &'f [crate::frame::Span<'_>],
+    measure: f32,
+    faces: &'f FaceTable,
+    digits: Digits,
+) -> Result<(Vec<Vec<LineSpan<'f>>>, f64), Error> {
     let note_face = if spans
         .iter()
         .any(|s| matches!(s, crate::frame::Span::Type { note: Some(_), .. }))
@@ -1064,6 +1285,7 @@ fn wrap_spans<'f>(
         }
     }
     let mut out = Vec::new();
+    let mut cost = 0.0;
     for chunk in chunks {
         if chunk.is_empty() {
             if let Some(face) = empty_face {
@@ -1078,23 +1300,26 @@ fn wrap_spans<'f>(
             }
             continue;
         }
-        out.extend(wrap_chunk(size, &chunk, measure, note_face));
+        let (lines, chunk_cost) = wrap_chunk_plan(size, &chunk, measure, note_face);
+        cost += chunk_cost;
+        cost += 1_000_000_000.0 * lines.len().saturating_sub(1) as f64;
+        out.extend(lines);
     }
     if out.is_empty() {
         out.push(Vec::new());
     }
-    Ok(out)
+    Ok((out, cost))
 }
 
-fn wrap_chunk<'f>(
+fn wrap_chunk_plan<'f>(
     size: TextSize,
     words: &[Word<'f>],
     measure: f32,
     note_face: Option<&'f TextFace>,
-) -> Vec<Vec<LineSpan<'f>>> {
+) -> (Vec<Vec<LineSpan<'f>>>, f64) {
     let n = words.len();
     if n == 0 {
-        return vec![Vec::new()];
+        return (vec![Vec::new()], 0.0);
     }
     let mut dp = vec![f64::INFINITY; n + 1];
     let mut prev = vec![0usize; n + 1];
@@ -1111,7 +1336,7 @@ fn wrap_chunk<'f>(
             let cost = if w > measure || (last && n_boxes >= 2) {
                 0.0
             } else {
-                let r = (measure - w) as f64;
+                let r = f64::from(measure - w);
                 r * r
             };
             let total = dp[i] + cost;
@@ -1129,9 +1354,12 @@ fn wrap_chunk<'f>(
         j = i;
     }
     ends.reverse();
-    ends.into_iter()
+    let lines = ends
+        .into_iter()
         .map(|(i, j)| words_to_line(&words[i..j]))
-        .collect()
+        .collect();
+    let cost = if dp[n].is_finite() { dp[n] } else { 0.0 };
+    (lines, cost)
 }
 
 fn words_to_line<'f>(words: &[Word<'f>]) -> Vec<LineSpan<'f>> {
@@ -1217,5 +1445,49 @@ fn blit(canvas: &mut Canvas, face: &Face, px: f32, x0: f32, baseline: f32, shape
                 canvas.set(origin_x + gx as i32, origin_y + gy as i32);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod pack_tests {
+    use super::pack_bands;
+
+    #[test]
+    fn short_sheet_is_one_band() {
+        assert_eq!(pack_bands(500, 910, &[500]), vec![(0, 500)]);
+    }
+
+    #[test]
+    fn latest_seam_in_the_min_count_window() {
+        assert_eq!(
+            pack_bands(1000, 910, &[100, 200, 400, 800, 1000]),
+            vec![(0, 800), (800, 1000)]
+        );
+    }
+
+    #[test]
+    fn h_1818_is_two_payloads_not_three() {
+        assert_eq!(pack_bands(1818, 910, &[1818]), vec![(0, 910), (910, 1818)]);
+    }
+
+    #[test]
+    fn missing_seam_splits_at_the_cap() {
+        assert_eq!(pack_bands(1000, 910, &[1000]), vec![(0, 910), (910, 1000)]);
+    }
+
+    #[test]
+    fn h_2000_is_three_payloads() {
+        assert_eq!(
+            pack_bands(2000, 910, &[2000]),
+            vec![(0, 910), (910, 1820), (1820, 2000)]
+        );
+    }
+
+    #[test]
+    fn a_seam_outside_the_window_does_not_add_a_payload() {
+        assert_eq!(
+            pack_bands(1818, 910, &[51, 1818]),
+            vec![(0, 910), (910, 1818)]
+        );
     }
 }

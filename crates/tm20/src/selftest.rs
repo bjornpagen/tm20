@@ -1,7 +1,7 @@
 //! Named paper cases. Each one is a [`Document`]; the CLI prints them.
 
 use crate::barcode::{Barcode, BarcodeKind, BarcodeOptions, Code128Set};
-use crate::command::{Align, CashDrawerPin, CodePage, Command, CutKind, Font, Underline};
+use crate::command::{Align, CashDrawerPin, CodePage, Command, Font, Underline};
 use crate::document::Document;
 use crate::graphics::{Graphics, GraphicsScale, pack};
 use crate::host::{hello, rule, ruler};
@@ -180,9 +180,7 @@ fn finish(mut cmds: Vec<Command>) -> Document {
             dots: PRINTABLE_DOTS,
         },
         Command::Feed { lines: 3 },
-        Command::Cut {
-            kind: CutKind::Partial,
-        },
+        Command::Cut,
     ]);
     Document::new(cmds)
 }

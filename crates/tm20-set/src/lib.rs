@@ -1,8 +1,9 @@
 //! Typesetting language for [`tm20`]. A [`Sheet`] of [`Frame`]s plus a
-//! [`FaceTable`] lowers to protocol [`tm20::Graphics`]. OpenType never enters
+//! [`FaceTable`] lowers to one or more protocol [`tm20::Graphics`]. OpenType never enters
 //! the protocol crate. Faces are bytes; which files they came from is not
 //! this crate’s decision.
 
+mod cols;
 mod compose;
 mod error;
 mod face;
@@ -22,7 +23,7 @@ pub use frame::{
 };
 pub use leading::{GRID, GridSkip, HANG, Leading, NOTE_RULE, TASK_BOX, pt_dots};
 pub use lower::lower;
-pub use preview::preview_png;
+pub use preview::{preview_png, preview_pngs};
 pub use size::{DPI, DisplaySize, TextSize};
 
 pub type Result<T> = std::result::Result<T, Error>;

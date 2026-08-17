@@ -359,6 +359,44 @@ fn mark_tracking_widens() {
 }
 
 #[test]
+fn mark_wider_than_the_measure_wraps() {
+    let faces = common::table();
+    let one = compose(
+        &Sheet::tape(vec![Frame::Mark(Mark {
+            cut: Cut::Roman,
+            size: DisplaySize::Pt18,
+            text: "H".into(),
+            align: MarkAlign::Start,
+            tracking: Tracking(0),
+        })]),
+        &faces,
+    )
+    .unwrap();
+    let wrapped = compose(
+        &Sheet::tape(vec![Frame::Mark(Mark {
+            cut: Cut::Roman,
+            size: DisplaySize::Pt18,
+            text: "Functional geometric algebra".into(),
+            align: MarkAlign::Start,
+            tracking: Tracking(0),
+        })]),
+        &faces,
+    )
+    .unwrap();
+    assert!(
+        wrapped.height_dots > one.height_dots,
+        "a mark longer than the tape should wrap ({} vs {})",
+        wrapped.height_dots,
+        one.height_dots
+    );
+    let (_, right, _, _) = ink_bbox(&wrapped);
+    assert!(
+        right < PRINTABLE_DOTS,
+        "wrapped mark should not clip at the tape edge (rightmost {right})"
+    );
+}
+
+#[test]
 fn rule_sits_below_the_line_slug() {
     let faces = common::table();
     let g = compose(
@@ -549,6 +587,238 @@ fn three_columns_compose() {
     )
     .unwrap();
     assert!(g.pixels.iter().any(|&b| b != 0));
+}
+
+fn three_start(a: &'static str, b: &'static str, c: &'static str) -> Frame<'static> {
+    Frame::Cols(Cols::three(
+        TextSize::Pt11,
+        GridSkip::ONE,
+        [ColAlign::Start, ColAlign::Start, ColAlign::Start],
+        vec![[
+            vec![Span::new(Cut::Roman, a)],
+            vec![Span::new(Cut::Roman, b)],
+            vec![Span::new(Cut::Roman, c)],
+        ]],
+    ))
+}
+
+fn ink_runs(g: &Graphics, y0: usize, y1: usize) -> Vec<(u16, u16)> {
+    let mut ink = vec![false; g.width_dots as usize];
+    for y in y0..y1.min(g.height_dots as usize) {
+        for x in 0..g.width_dots {
+            if packed_ink(g, y, x) {
+                ink[x as usize] = true;
+            }
+        }
+    }
+    let mut runs = Vec::new();
+    let mut x = 0u16;
+    while x < g.width_dots {
+        if !ink[x as usize] {
+            x += 1;
+            continue;
+        }
+        let start = x;
+        while x < g.width_dots && ink[x as usize] {
+            x += 1;
+        }
+        runs.push((start, x));
+    }
+    runs
+}
+
+fn two_start(a: &'static str, b: &'static str) -> Frame<'static> {
+    Frame::Cols(Cols::two(
+        TextSize::Pt11,
+        GridSkip::ONE,
+        [ColAlign::Start, ColAlign::Start],
+        vec![[
+            vec![Span::new(Cut::Roman, a)],
+            vec![Span::new(Cut::Roman, b)],
+        ]],
+    ))
+}
+
+#[test]
+fn two_start_columns_keep_a_grid_gutter() {
+    let faces = common::table();
+    let g = compose(&Sheet::tape(vec![two_start("x", "y")]), &faces).unwrap();
+    let merged = merge_runs(ink_runs(&g, 0, g.height_dots as usize));
+    assert_eq!(merged.len(), 2, "two short Start columns; got {merged:?}");
+    let gap = merged[1].0 - merged[0].1;
+    assert!(
+        gap < 64,
+        "gutter is GRID, not leftover across the tape (gap {gap})"
+    );
+    assert!(
+        gap >= GRID / 2,
+        "columns should not touch (gap {gap}, GRID {GRID})"
+    );
+    let (_, right, ..) = ink_bbox(&g);
+    assert!(
+        u32::from(right) * 2 < u32::from(g.width_dots),
+        "compact table sits left ({right} of {})",
+        g.width_dots
+    );
+    assert!(leftmost_ink(&g) < GRID);
+}
+
+#[test]
+fn start_columns_size_to_content() {
+    let faces = common::table();
+    let g = compose(
+        &Sheet::tape(vec![three_start(
+            "0",
+            "scalar",
+            "discourse orientation now",
+        )]),
+        &faces,
+    )
+    .unwrap();
+    let (_, _, y0, y1) = ink_bbox(&g);
+    assert!(
+        y1 - y0 + 1 < l11() as usize,
+        "discourse orientation should stay one line (ink span {})",
+        y1 - y0 + 1
+    );
+    let merged = merge_runs(ink_runs(&g, 0, g.height_dots as usize));
+    assert!(
+        merged.len() >= 4,
+        "0, scalar, discourse, orientation; got {merged:?}"
+    );
+    let grade_w = merged[0].1 - merged[0].0;
+    let object_w = merged[1].1 - merged[1].0;
+    assert!(
+        object_w > grade_w,
+        "object box {object_w} should be wider than grade {grade_w}"
+    );
+    let gap_grade = merged[1].0 - merged[0].1;
+    let gap_object = merged[2].0 - merged[1].1;
+    assert!(
+        gap_grade < 64,
+        "gutter is GRID, not leftover (gap {gap_grade})"
+    );
+    let delta = i32::from(gap_grade) - i32::from(gap_object);
+    assert!(
+        delta.abs() <= 8,
+        "air after 0 ({gap_grade}) and after scalar ({gap_object}) should match"
+    );
+}
+
+fn merge_runs(runs: Vec<(u16, u16)>) -> Vec<(u16, u16)> {
+    merge_runs_at(runs, 3)
+}
+
+fn merge_runs_at(runs: Vec<(u16, u16)>, join: u16) -> Vec<(u16, u16)> {
+    let mut merged: Vec<(u16, u16)> = Vec::new();
+    for r in runs {
+        if let Some(last) = merged.last_mut()
+            && r.0.saturating_sub(last.1) <= join
+        {
+            last.1 = r.1;
+        } else {
+            merged.push(r);
+        }
+    }
+    merged
+}
+
+fn three_start_rows(rows: Vec<[&'static str; 3]>, header: bool) -> Frame<'static> {
+    let body: Vec<[Vec<Span<'static>>; 3]> = rows
+        .into_iter()
+        .enumerate()
+        .map(|(i, [a, b, c])| {
+            let cut = if header && i == 0 {
+                Cut::Bold
+            } else {
+                Cut::Roman
+            };
+            [
+                vec![Span::new(cut, a)],
+                vec![Span::new(cut, b)],
+                vec![Span::new(cut, c)],
+            ]
+        })
+        .collect();
+    Frame::Cols(Cols::three(
+        TextSize::Pt11,
+        GridSkip::ONE,
+        [ColAlign::Start, ColAlign::Start, ColAlign::Start],
+        body,
+    ))
+}
+
+fn ink_bands(g: &Graphics) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut y = 0usize;
+    let h = g.height_dots as usize;
+    while y < h {
+        let mut ink = false;
+        for x in 0..g.width_dots {
+            if packed_ink(g, y, x) {
+                ink = true;
+                break;
+            }
+        }
+        if !ink {
+            y += 1;
+            continue;
+        }
+        let y0 = y;
+        while y < h {
+            let mut row = false;
+            for x in 0..g.width_dots {
+                if packed_ink(g, y, x) {
+                    row = true;
+                    break;
+                }
+            }
+            if !row {
+                break;
+            }
+            y += 1;
+        }
+        out.push((y0, y));
+    }
+    out
+}
+
+#[test]
+fn fga_grade_row_meaning_stays_one_line() {
+    let faces = common::table();
+    let g = compose(
+        &Sheet::tape(vec![three_start_rows(
+            vec![
+                ["Grade", "Object", "Meaning"],
+                ["n", "pseudoscalar", "discourse orientation"],
+            ],
+            true,
+        )]),
+        &faces,
+    )
+    .unwrap();
+    let bands = ink_bands(&g);
+    assert_eq!(
+        bands.len(),
+        2,
+        "header and one data line; got {} bands {bands:?}",
+        bands.len()
+    );
+    let header = merge_runs_at(ink_runs(&g, bands[0].0, bands[0].1), GRID);
+    let data = merge_runs_at(ink_runs(&g, bands[1].0, bands[1].1), GRID);
+    assert_eq!(header.len(), 3, "Grade Object Meaning; got {header:?}");
+    assert!(data.len() >= 3, "n, pseudoscalar, meaning; got {data:?}");
+    let delta = i32::from(header[2].0) - i32::from(data[2].0);
+    assert!(
+        delta.abs() <= 2,
+        "Meaning cells share a left edge (header {} vs data {})",
+        header[2].0,
+        data[2].0
+    );
+    assert!(
+        header[1].1 - header[1].0 < data[1].1 - data[1].0,
+        "Object ink should be narrower than pseudoscalar"
+    );
 }
 
 #[test]
@@ -986,14 +1256,41 @@ fn figure_blits_into_the_canvas() {
     )
     .unwrap();
     let mut ink = 0;
-    for y in 0..8 {
-        for x in 0..8 {
+    for y in 0..g.height_dots as usize {
+        for x in 0..g.width_dots {
             if packed_ink(&g, y, x) {
                 ink += 1;
             }
         }
     }
     assert!(ink > 0);
+}
+
+#[test]
+fn figure_narrower_than_the_measure_is_centered() {
+    let faces = common::table();
+    let bits = vec![true; 8 * 8];
+    let g = compose(
+        &Sheet::tape(vec![Frame::Figure(Figure::from_bits(8, 8, bits).unwrap())]),
+        &faces,
+    )
+    .unwrap();
+    let left = leftmost_ink(&g);
+    let want = (PRINTABLE_DOTS - 8) / 2;
+    assert_eq!(left, want);
+}
+
+#[test]
+fn figure_as_wide_as_the_measure_is_a_full_slice() {
+    let faces = common::table();
+    let w = PRINTABLE_DOTS;
+    let bits = vec![true; w as usize];
+    let g = compose(
+        &Sheet::tape(vec![Frame::Figure(Figure::from_bits(w, 1, bits).unwrap())]),
+        &faces,
+    )
+    .unwrap();
+    assert_eq!(leftmost_ink(&g), 0);
 }
 
 #[test]
@@ -1114,10 +1411,12 @@ fn figure_note_has_raised_ink() {
     let mut sheet = Sheet::tape(vec![Frame::Figure(fig)]);
     sheet.notes.push(Note::dest("grid"));
     let g = compose(&sheet, &faces).unwrap();
+    let left = leftmost_ink(&g);
+    let after_bitmap = left + 8;
     let mut after = false;
     let max_y = 16.min(g.height_dots as usize);
     for y in 0..max_y {
-        for x in 8..g.width_dots {
+        for x in after_bitmap..g.width_dots {
             if packed_ink(&g, y, x) {
                 after = true;
             }

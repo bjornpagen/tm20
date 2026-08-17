@@ -335,18 +335,30 @@ fn autolink_has_no_note() {
 }
 
 #[test]
-fn email_autolink_notes_the_address() {
+fn email_autolink_is_italic_without_a_note() {
     let s = parse("Write <foo@bar.com>.");
     match &s.frames[0] {
         Frame::Text(b) => {
             assert!(b.spans.iter().any(|sp| span_cut(sp) == Cut::Italic));
+            assert!(b.spans.iter().all(|sp| span_note(sp).is_none()));
+        }
+        _ => panic!("text"),
+    }
+    assert!(s.notes.is_empty());
+}
+
+#[test]
+fn labeled_mailto_still_has_a_note() {
+    let s = parse("[email me](mailto:a@b.com)");
+    match &s.frames[0] {
+        Frame::Text(b) => {
             assert!(b.spans.iter().any(|sp| span_note(sp) == Some(1)));
         }
         _ => panic!("text"),
     }
     assert!(matches!(
         &s.notes[0],
-        Note::Dest { dest, title: None } if dest == "foo@bar.com"
+        Note::Dest { dest, title: None } if dest == "a@b.com"
     ));
 }
 
@@ -379,13 +391,10 @@ fn image_paragraph_is_a_figure() {
         .unwrap();
     let s = sheet("![pig](pig.png)", Measure::TAPE, |_| Ok(buf.clone())).unwrap();
     match &s.frames[0] {
-        Frame::Figure(fig) => assert_eq!(fig.note.map(std::num::NonZero::get), Some(1)),
+        Frame::Figure(fig) => assert!(fig.note.is_none()),
         _ => panic!("figure"),
     }
-    assert!(matches!(
-        &s.notes[0],
-        Note::Dest { dest, title: None } if dest == "pig"
-    ));
+    assert!(s.notes.is_empty());
 }
 
 #[test]
@@ -400,20 +409,6 @@ fn figure_dest_resolves_and_keeps_native_size() {
         }
         _ => panic!("figure"),
     }
-}
-
-#[test]
-fn empty_alt_has_no_note() {
-    let img = image::GrayImage::from_pixel(1, 1, image::Luma([0]));
-    let mut buf = Vec::new();
-    img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
-        .unwrap();
-    let s = sheet("![](x.png)", Measure::TAPE, |_| Ok(buf.clone())).unwrap();
-    match &s.frames[0] {
-        Frame::Figure(fig) => assert!(fig.note.is_none()),
-        _ => panic!("figure"),
-    }
-    assert!(s.notes.is_empty());
 }
 
 #[test]

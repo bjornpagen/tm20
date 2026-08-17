@@ -22,7 +22,8 @@ on the typesetter without a crate cycle.
   `Transport` writes them. USB, serial, TCP. `Command::Text` is CP437.
   The printer never sees a font. `cargo install tm20` is the protocol CLI.
 - **`tm20-set`** — typesetter. A `Sheet` of `Frame`s (flush left, Vignelli
-  sizes, leading on an 8-dot grid) compiles to one `tm20::Graphics`. OpenType
+  sizes, leading on an 8-dot grid) compiles to one or more `tm20::Graphics`
+  (each `GS ( L)` payload is at most 910 dots tall at tape width). OpenType
   lives here as bytes. Which face those bytes came from is the program that
   prints, not the library.
 - **`tm20-md`** — CommonMark 0.31.2 plus pipe tables, task lists, autolinks,
@@ -33,13 +34,13 @@ on the typesetter without a crate cycle.
 `tm20-set` depends on `tm20`. Never the reverse.
 
 ```rust
-use tm20::{encode, Command, CutKind, Document, Transport, Usb};
+use tm20::{encode, Command, Document, Transport, Usb};
 
 let doc = Document::new(vec![
     Command::Init,
     Command::Text("SYSTEM ONLINE".into()),
     Command::Feed { lines: 3 },
-    Command::Cut { kind: CutKind::Partial },
+    Command::Cut,
 ]);
 Usb::open(None)?.write(&encode(&doc)?)?;
 ```

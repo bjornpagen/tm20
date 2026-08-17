@@ -24,12 +24,12 @@ pub mod usb;
 
 pub use barcode::{Barcode, BarcodeFont, BarcodeKind, BarcodeOptions, Code128Set, HriPosition};
 pub use command::{
-    Align, CashDrawerPin, CodePage, Command, CutKind, Font, LineSpacing, PrintSpeed, Underline,
+    Align, CashDrawerPin, CodePage, Command, Font, LineSpacing, PrintSpeed, Underline,
 };
 pub use document::Document;
 pub use encode::encode;
 pub use error::{EncodeError, Error, IdentifyError, Result, StatusError, UsbError};
-pub use graphics::{Graphics, GraphicsScale, pack};
+pub use graphics::{Graphics, GraphicsScale, max_height, pack};
 pub use host::{ean13_page, hello, qr_page, rule, ruler, text_page};
 pub use identify::{InfoRequest, encode_info, encode_process_id, parse_process_id, query_info};
 pub use memory::Memory;

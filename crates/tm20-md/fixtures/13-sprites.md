@@ -1,6 +1,6 @@
 # Sprites
 
-Cartoon line art at native size. A nonempty alt is a note.
+Cartoon line art at native size, centered on the tape.
 
 ![cat](cat.png)
 

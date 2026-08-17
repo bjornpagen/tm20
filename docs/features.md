@@ -191,7 +191,7 @@ Resident style (bold, underline, invert, size, smoothing, double-strike, upside-
 
 ## Host crate: `tm20-set`
 
-The printer never loads a TTF. `tm20-set` is the authoring surface: a closed `Frame` AST (`Text` / `Mark` / `Pair` / `Rule` / `Skip`), optical roles (`TextFace` at 8|11 pt, `DisplayFace` at 14|18|24 pt), leading snapped to an 8-dot grid. `compose` packs one `Graphics`; `lower` emits `Init`, CP437, that raster, feed, full cut.
+The printer never loads a TTF. `tm20-set` is the authoring surface: a closed `Frame` AST (`Text` / `Mark` / `Pair` / `Rule` / `Skip`), optical roles (`TextFace` at 8|11 pt, `DisplayFace` at 14|18|24 pt), leading snapped to an 8-dot grid. `compose` paints one tape-wide raster; `lower` emits `Init`, CP437, as many `Graphics` as `ceil(H/910)`, feed, cut.
 
 Kerning is data in the glyph stream. Ugly layouts (justify, right-aligned paragraphs, 9.5 pt, CSS line-height) are unrepresentable.
 

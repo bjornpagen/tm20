@@ -4,7 +4,7 @@ See [the canon](https://www.vignelli.com/canon.pdf) and again [the same](https:/
 
 A title is the work, then the location: [Bringhurst](https://example.org/elements "The Elements of Typographic Style").
 
-Write <hello@example.com>.
+Write <hello@example.com>. The address is italic; it is not a note.
 
 A footnote is the same apparatus.[^ruder] Unused definitions never print.
 

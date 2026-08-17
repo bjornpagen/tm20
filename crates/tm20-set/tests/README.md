@@ -16,7 +16,7 @@ proofs live in `tests/`. Each test is one fact.
 
 ## Compose (`algebra.rs`)
 
-Tape width. Closed sizes. Wrap taller than one line; first line hugs the measure. Paragraph blank vs hard break. Head sticks; Mark has more air, can center, tracking widens. Rule clears the slug; Two is two rows. Columns: ink both sides, hang from a rule (text does not), consecutive tables tight, start column wraps, three columns compose, illegal shape errors. List: dash runover clears the mark column; decimal hang fits the widest marker; loose taller than tight; tight item texts share a slug; nest and ul-then-ol are not a blank; nest cap 3; task box hangs on the grid and sits in the cap band; a check adds ink. Quote hang is `GRID`; nest cap 3. Code hang is `GRID`, does not wrap, and needs Mono. Figure blits. Notes after a short rule with 2 pt air. Missing text/display/mono cuts error. Preview PNG is a PNG.
+Tape width. Closed sizes. Wrap taller than one line; first line hugs the measure. Paragraph blank vs hard break. Head sticks; Mark has more air, can center, tracking widens, wraps if wider than the tape. Rule clears the slug; Two is two rows. Columns: ink both sides, hang from a rule (text does not), consecutive tables tight, start column wraps, three columns compose, all-Start is natural width with `GRID` gutters, End hangs on the tape, illegal shape errors. List: dash runover clears the mark column; decimal hang fits the widest marker; loose taller than tight; tight item texts share a slug; nest and ul-then-ol are not a blank; nest cap 3; task box hangs on the grid and sits in the cap band; a check adds ink. Quote hang is `GRID`; nest cap 3. Code hang is `GRID`, does not wrap, and needs Mono. Figure blits; narrower than the measure is centered, tape-wide is a full slice. Notes after a short rule with 2 pt air. Missing text/display/mono cuts error. Preview PNG is a PNG.
 
 ## Catalog analog (`frames.rs`)
 
@@ -24,7 +24,7 @@ Every `Frame` variant lowers and encodes. Mixed cuts live on the `Text` case. A 
 
 ## Lower (`lower.rs`)
 
-Init, PC437, Graphics, Feed 3, full cut. No `PrintSpeed`. Bytes start with `ESC @` and contain `GS ( L`.
+Init, PC437, one or more Graphics (each ≤ 910 dots tall), Feed 3, cut. No `PrintSpeed`. Bytes start with `ESC @` and contain `GS ( L`. A sheet taller than 910 dots is `ceil(H/910)` payloads, a partition of the painted rows.
 
 ## Residuals the engine still chooses
 

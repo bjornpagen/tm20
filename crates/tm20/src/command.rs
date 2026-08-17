@@ -7,12 +7,6 @@ use crate::status::StatusRequest;
 use crate::symbol::{DataMatrix, Gs1DataBar, MaxiCode, Pdf417, Qr};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CutKind {
-    Full,
-    Partial,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Align {
     Left,
     Center,
@@ -78,9 +72,8 @@ impl PrintSpeed {
 pub enum Command {
     Init,
     Cancel,
-    Cut {
-        kind: CutKind,
-    },
+    /// Autocutter. TM-T20III is a partial cut (one point at left uncut).
+    Cut,
     /// `n` line feeds (`0x0A`), matching morningprint `hello`.
     Feed {
         lines: u8,

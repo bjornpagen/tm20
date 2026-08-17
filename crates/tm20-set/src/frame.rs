@@ -113,7 +113,7 @@ pub struct Head<'a> {
     pub text: Cow<'a, str>,
 }
 
-/// Single line, no wrap. Center is only legal here.
+/// Display line. Wraps to the measure. Center is only legal here.
 pub struct Mark<'a> {
     pub cut: Cut,
     pub size: DisplaySize,
@@ -126,6 +126,7 @@ pub struct Rule {
     pub thickness: Thickness,
 }
 
+/// Ink in the cell. Last [`End`] hangs the table on the tape; all-Start is compact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColAlign {
     Start,
@@ -292,7 +293,7 @@ fn bitmap(width: u16, height: u16, bits: Vec<bool>) -> Result<(u16, u16, Vec<boo
     Ok((width, height, bits))
 }
 
-/// Photograph. Native size, flush left; shrinks if wider than the measure. `true` is black.
+/// Photograph. Native size; shrinks if wider than the measure; centered if narrower. `true` is black.
 #[derive(Clone)]
 pub struct Figure {
     pub width: u16,
@@ -449,7 +450,7 @@ impl<'a> Note<'a> {
     }
 }
 
-/// Authoring document. Compiles to one `Graphics`.
+/// Authoring document. Compiles to one or more `Graphics`.
 pub struct Sheet<'a> {
     pub width: Measure,
     pub frames: Vec<Frame<'a>>,

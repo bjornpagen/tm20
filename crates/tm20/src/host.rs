@@ -1,7 +1,7 @@
 //! Host helpers that lower to [`crate::command::Command`]. Not engine surface.
 
 use crate::barcode::{Barcode, BarcodeKind, BarcodeOptions};
-use crate::command::{Align, CodePage, Command, CutKind, Font, LineSpacing};
+use crate::command::{Align, CodePage, Command, Font, LineSpacing};
 use crate::document::Document;
 use crate::symbol::{Qr, QrEcc, QrModel};
 use crate::{COLS_A, COLS_B, ROW_DOTS_A};
@@ -16,9 +16,7 @@ pub fn hello() -> Document {
         Command::CodePage(CodePage::Pc437),
         Command::Text("SYSTEM ONLINE".into()),
         Command::Feed { lines: 3 },
-        Command::Cut {
-            kind: CutKind::Partial,
-        },
+        Command::Cut,
     ])
 }
 
@@ -28,9 +26,7 @@ pub fn text_page(text: &str) -> Document {
         Command::CodePage(CodePage::Pc437),
         Command::Text(text.to_string()),
         Command::Feed { lines: 3 },
-        Command::Cut {
-            kind: CutKind::Partial,
-        },
+        Command::Cut,
     ])
 }
 
@@ -74,9 +70,7 @@ pub fn ruler() -> Document {
         Command::Invert(false),
         Command::Feed { lines: 1 },
         Command::Feed { lines: 3 },
-        Command::Cut {
-            kind: CutKind::Partial,
-        },
+        Command::Cut,
     ]);
     Document::new(cmds)
 }
@@ -92,9 +86,7 @@ pub fn qr_page(data: &str) -> Document {
             ecc: QrEcc::M,
         }),
         Command::Feed { lines: 3 },
-        Command::Cut {
-            kind: CutKind::Partial,
-        },
+        Command::Cut,
     ])
 }
 
@@ -108,9 +100,7 @@ pub fn ean13_page(digits: &str) -> Document {
             options: BarcodeOptions::default(),
         }),
         Command::Feed { lines: 3 },
-        Command::Cut {
-            kind: CutKind::Partial,
-        },
+        Command::Cut,
     ])
 }
 

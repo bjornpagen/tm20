@@ -33,6 +33,13 @@ pub fn width_bytes(width_dots: u16) -> usize {
     (width_dots as usize).div_ceil(8)
 }
 
+/// Largest `height_dots` whose fn=112 body fits in a 16-bit length.
+/// At 576 dots wide this is 910 (`10 + 72*h ≤ 65535`).
+pub fn max_height(width_dots: u16) -> u16 {
+    let stride = width_bytes(width_dots).max(1);
+    ((65535 - 10) / stride) as u16
+}
+
 /// Pack row-major pixels, `true` = black, MSB first in each byte.
 pub fn pack(width_dots: u16, height_dots: u16, pixels: &[bool]) -> Result<Vec<u8>, EncodeError> {
     let expected = width_dots as usize * height_dots as usize;
@@ -124,6 +131,13 @@ mod tests {
         bits[0] = true;
         bits[7] = true;
         assert_eq!(pack(8, 1, &bits).unwrap(), vec![0b1000_0001]);
+    }
+
+    #[test]
+    fn tape_wide_max_height_is_910() {
+        assert_eq!(max_height(576), 910);
+        assert!(10 + width_bytes(576) * 910 <= 65535);
+        assert!(10 + width_bytes(576) * 911 > 65535);
     }
 
     #[test]

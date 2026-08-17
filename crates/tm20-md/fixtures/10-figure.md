@@ -1,6 +1,6 @@
 # Figure
 
-A paragraph that is only an image becomes a figure, scaled to the tape. A nonempty alt is a note; an empty alt is not.
+A paragraph that is only an image becomes a figure. Alt text does not print. A picture that fills the tape is a full-width slice; a smaller one is centered.
 
 ![grid](grid.png)
 

@@ -1,9 +1,7 @@
 //! `encode` is a function. Valid IR becomes bytes; illegal combinations error.
 
 use crate::barcode;
-use crate::command::{
-    Align, CashDrawerPin, Command, CutKind, Font, LineSpacing, PrintSpeed, Underline,
-};
+use crate::command::{Align, CashDrawerPin, Command, Font, LineSpacing, PrintSpeed, Underline};
 use crate::cp437::encode_cp437;
 use crate::document::Document;
 use crate::error::EncodeError;
@@ -34,10 +32,7 @@ fn encode_one(cmd: &Command, out: &mut Vec<u8>) -> Result<(), EncodeError> {
     match cmd {
         Command::Init => out.extend_from_slice(&[ESC, b'@']),
         Command::Cancel => out.push(CAN),
-        Command::Cut { kind } => match kind {
-            CutKind::Full => out.extend_from_slice(&[GS, b'V', b'A', 0]),
-            CutKind::Partial => out.extend_from_slice(&[GS, b'V', b'B', 0]),
-        },
+        Command::Cut => out.extend_from_slice(&[GS, b'V', b'B', 0]),
         Command::Feed { lines } => out.extend(std::iter::repeat_n(0x0a, *lines as usize)),
         Command::FeedDots { dots } => out.extend_from_slice(&[ESC, b'J', *dots]),
         Command::CharSpacing { dots } => out.extend_from_slice(&[ESC, b' ', *dots]),
@@ -243,12 +238,7 @@ mod tests {
         let cmds = vec![
             Command::Init,
             Command::Cancel,
-            Command::Cut {
-                kind: CutKind::Full,
-            },
-            Command::Cut {
-                kind: CutKind::Partial,
-            },
+            Command::Cut,
             Command::Feed { lines: 2 },
             Command::FeedDots { dots: 8 },
             Command::CharSpacing { dots: 1 },
