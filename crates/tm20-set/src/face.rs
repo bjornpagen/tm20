@@ -1,21 +1,19 @@
 //! Parsed CFF OpenType. Optical role is a second parse into [`TextFace`] or
 //! [`DisplayFace`]. Which [`Cut`] a face fills is decided outside this crate.
+//! HarfRust shapes; swash paints; this crate caches the strike.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 
 use harfrust::font::FontFuncs;
 use harfrust::{Feature, FontRef, GlyphId, ShapeOptions, ShaperData, Tag, UnicodeBuffer};
-use skrifa::MetadataProvider;
-use skrifa::instance::{LocationRef, Size};
-use skrifa::outline::{
-    DrawSettings, HintingInstance, OutlineGlyphCollection, OutlineGlyphFormat, Target,
-};
-use skrifa::raw::TableProvider;
+use swash::scale::{Render, ScaleContext, Source};
+use swash::zeno::Format;
+use swash::{CacheKey, FontRef as SwashFont};
 
 use crate::error::Error;
 use crate::size::{DisplaySize, FRAC, TextSize};
-use crate::strike::{self, Path, Strike};
+use crate::strike::{self, Strike};
 
 /// Named voice. The sheet writes these; [`FaceTable`] says what they are.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,11 +87,13 @@ impl FaceTable {
 pub struct Face {
     bytes: Vec<u8>,
     index: u32,
+    offset: u32,
+    key: CacheKey,
     hb: ShaperData,
     buf: RefCell<Option<UnicodeBuffer>>,
     upem: u16,
     ascent: i16,
-    hinters: RefCell<HashMap<u16, HintingInstance>>,
+    scale: RefCell<ScaleContext>,
     strikes: RefCell<HashMap<(u16, u16), Strike>>,
 }
 
@@ -112,6 +112,31 @@ enum ShapeKind {
 
 fn scale(ppem: u16) -> i32 {
     i32::from(ppem) * FRAC
+}
+
+/// CFF OpenType is `OTTO` plus a `CFF ` or `CFF2` table. TrueType is a different magic.
+fn is_cff_sfnt(data: &[u8], offset: u32) -> bool {
+    let o = offset as usize;
+    let Some(magic) = data.get(o..o + 4) else {
+        return false;
+    };
+    if magic != b"OTTO" {
+        return false;
+    }
+    let Some(n) = data.get(o + 4..o + 6) else {
+        return false;
+    };
+    let n = u16::from_be_bytes([n[0], n[1]]) as usize;
+    for i in 0..n {
+        let rec = o + 12 + i * 16;
+        let Some(tag) = data.get(rec..rec + 4) else {
+            return false;
+        };
+        if tag == b"CFF " || tag == b"CFF2" {
+            return true;
+        }
+    }
+    false
 }
 
 struct Hinted<'a> {
@@ -137,22 +162,35 @@ impl Face {
     }
 
     pub fn from_bytes_index(bytes: Vec<u8>, index: u32) -> Result<Self, Error> {
-        let font = FontRef::from_index(&bytes, index).map_err(|_| Error::Font)?;
-        OutlineGlyphCollection::with_format(&font, OutlineGlyphFormat::Cff).ok_or(Error::Font)?;
-        let upem = font.head().map_err(|_| Error::Font)?.units_per_em();
-        if upem == 0 {
-            return Err(Error::Font);
-        }
-        let ascent = font.hhea().map_err(|_| Error::Font)?.ascender().to_i16();
-        let hb = ShaperData::new(&font);
+        let (upem, ascent, offset, key, hb) = {
+            let font = FontRef::from_index(&bytes, index).map_err(|_| Error::Font)?;
+            let swash = SwashFont::from_index(&bytes, index as usize).ok_or(Error::Font)?;
+            if !is_cff_sfnt(swash.data, swash.offset) {
+                return Err(Error::Font);
+            }
+            let metrics = swash.metrics(&[]);
+            let upem = metrics.units_per_em;
+            if upem == 0 {
+                return Err(Error::Font);
+            }
+            (
+                upem,
+                metrics.ascent.round() as i16,
+                swash.offset,
+                swash.key,
+                ShaperData::new(&font),
+            )
+        };
         Ok(Self {
             bytes,
             index,
+            offset,
+            key,
             hb,
             buf: RefCell::new(Some(UnicodeBuffer::new())),
             upem,
             ascent,
-            hinters: RefCell::new(HashMap::new()),
+            scale: RefCell::new(ScaleContext::new()),
             strikes: RefCell::new(HashMap::new()),
         })
     }
@@ -173,44 +211,31 @@ impl Face {
         i32::from(self.ascent) * scale(ppem) / i32::from(self.upem)
     }
 
-    fn ensure_hinter(&self, ppem: u16) {
-        if self.hinters.borrow().contains_key(&ppem) {
-            return;
-        }
-        let font = self.font();
-        let outlines = OutlineGlyphCollection::with_format(&font, OutlineGlyphFormat::Cff)
-            .expect("CFF checked at parse");
-        let hinter = HintingInstance::new(
-            &outlines,
-            Size::new(f32::from(ppem)),
-            LocationRef::default(),
-            Target::Mono,
-        )
-        .expect("CFF hinter");
-        self.hinters.borrow_mut().insert(ppem, hinter);
-    }
-
     fn paint_strike(&self, glyph_id: u16, ppem: u16) -> Strike {
-        self.ensure_hinter(ppem);
-        let font = self.font();
-        let outlines = OutlineGlyphCollection::with_format(&font, OutlineGlyphFormat::Cff)
-            .expect("CFF checked at parse");
-        let linear = font
-            .glyph_metrics(Size::new(f32::from(ppem)), LocationRef::default())
-            .advance_width(GlyphId::from(glyph_id))
-            .unwrap_or(0.0);
-        let Some(glyph) = outlines.get(GlyphId::from(glyph_id)) else {
-            return Strike::empty((linear * FRAC as f32).round() as i32);
+        let font = SwashFont {
+            data: &self.bytes,
+            offset: self.offset,
+            key: self.key,
         };
-        let hinters = self.hinters.borrow();
-        let hinter = hinters.get(&ppem).expect("ensure_hinter");
-        let mut path = Path::default();
-        match glyph.draw(DrawSettings::hinted(hinter, false), &mut path) {
-            Ok(metrics) => {
-                let advance_px = metrics.advance_width.unwrap_or(linear);
-                strike::from_pen(&path, advance_px)
-            }
-            Err(_) => Strike::empty((linear * FRAC as f32).round() as i32),
+        let advance_px = font
+            .glyph_metrics(&[])
+            .scale(f32::from(ppem))
+            .advance_width(glyph_id);
+        let mut scale = self.scale.borrow_mut();
+        let mut scaler = scale.builder(font).size(f32::from(ppem)).hint(true).build();
+        match Render::new(&[Source::Outline])
+            .format(Format::Alpha)
+            .render(&mut scaler, glyph_id)
+        {
+            Some(image) => strike::from_mask(
+                image.placement.left,
+                image.placement.top,
+                image.placement.width,
+                image.placement.height,
+                &image.data,
+                advance_px,
+            ),
+            None => Strike::empty((advance_px * FRAC as f32).round() as i32),
         }
     }
 

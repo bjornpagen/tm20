@@ -1469,13 +1469,40 @@ fn dump_preview_pngs() {
             Span::new(Cut::BoldItalic, "both"),
         ],
     });
-    let cases: [(&str, Sheet<'_>); 6] = [
+    let lilt = "lilt qt coco";
+    let cases: [(&str, Sheet<'_>); 9] = [
         ("nested-list", Sheet::tape(vec![Frame::List(nested)])),
         ("ul-then-ol", Sheet::tape(ul_ol)),
         ("tasks", Sheet::tape(vec![Frame::List(tasks)])),
         ("wrap", Sheet::tape(vec![wrap])),
         ("notes", notes),
         ("bold-italic", Sheet::tape(vec![both])),
+        (
+            "lilt-8",
+            Sheet::tape(vec![Frame::Text(TextBlock::plain(
+                Cut::Roman,
+                TextSize::Pt8,
+                lilt,
+            ))]),
+        ),
+        (
+            "lilt-11",
+            Sheet::tape(vec![Frame::Text(TextBlock::plain(
+                Cut::Roman,
+                TextSize::Pt11,
+                lilt,
+            ))]),
+        ),
+        (
+            "lilt-18",
+            Sheet::tape(vec![Frame::Mark(Mark {
+                cut: Cut::Roman,
+                size: DisplaySize::Pt18,
+                text: lilt.into(),
+                align: MarkAlign::Start,
+                tracking: Tracking(0),
+            })]),
+        ),
     ];
     for (name, sheet) in cases {
         let g = compose(&sheet, &faces).unwrap();
