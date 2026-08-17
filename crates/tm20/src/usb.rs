@@ -2,7 +2,8 @@
 //! bulk OUT. IN is optional and only used for status reads.
 //!
 //! The printer queues jobs in its receive buffer. This module is a pipe:
-//! claim, write, read. Do not send a USB zero-length packet (`flush_end`);
+//! claim, write, read. Bulk OUT blocks until the printer drains; USB NAK is
+//! backpressure. Do not send a USB zero-length packet (`flush_end`);
 //! printer-class bulk OUT wedges on it.
 
 use std::io::{Read, Write};
@@ -16,10 +17,6 @@ use crate::error::{Result, UsbError};
 use crate::transport::Transport;
 use crate::{PID, VID};
 
-const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
-const READ_TIMEOUT: Duration = Duration::from_secs(2);
-/// Long enough for a queued job plus cut before `GS ( H` replies.
-pub const WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 const PRINTER_CLASS: u8 = 7;
 
 fn trace(msg: &str) {
@@ -165,7 +162,7 @@ impl Usb {
         self.inp
     }
 
-    pub fn read_timeout(&mut self, buf: &mut [u8], timeout: Duration) -> Result<usize> {
+    fn read_in(&mut self, buf: &mut [u8]) -> Result<usize> {
         let addr = self.inp.ok_or(UsbError::NoBulkOut)?;
         let started = Instant::now();
         let endpoint = self
@@ -173,12 +170,11 @@ impl Usb {
             .endpoint::<Bulk, In>(addr)
             .map_err(UsbError::from)?;
         let max = endpoint.max_packet_size();
-        let mut reader = endpoint.reader(max.max(64)).with_read_timeout(timeout);
+        let mut reader = endpoint.reader(max.max(64));
         let n = reader.read(buf).map_err(UsbError::Transfer)?;
         trace(&format!(
-            "bulk IN {n} bytes {}ms (timeout {}ms)",
-            started.elapsed().as_millis(),
-            timeout.as_millis()
+            "bulk IN {n} bytes {}ms",
+            started.elapsed().as_millis()
         ));
         Ok(n)
     }
@@ -195,7 +191,7 @@ impl Usb {
                     index: u16::from(self.iface),
                     length: 1,
                 },
-                Duration::from_millis(500),
+                Duration::MAX,
             )
             .wait()
             .map_err(|e| UsbError::Transfer(std::io::Error::other(e.to_string())))?;
@@ -217,7 +213,7 @@ impl Transport for Usb {
             .endpoint::<Bulk, Out>(self.out)
             .map_err(UsbError::from)?;
         let max = endpoint.max_packet_size().max(64);
-        let mut writer = endpoint.writer(max).with_write_timeout(WRITE_TIMEOUT);
+        let mut writer = endpoint.writer(max);
         writer.write_all(data).map_err(UsbError::Transfer)?;
         writer.flush().map_err(UsbError::Transfer)?;
         trace(&format!(
@@ -229,6 +225,6 @@ impl Transport for Usb {
     }
 
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-        self.read_timeout(buf, READ_TIMEOUT)
+        self.read_in(buf)
     }
 }

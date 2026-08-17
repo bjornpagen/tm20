@@ -6,15 +6,13 @@ use std::time::Duration;
 use crate::error::Result;
 use crate::transport::Transport;
 
-const TIMEOUT: Duration = Duration::from_secs(5);
-
 pub struct Serial {
     port: Box<dyn serialport::SerialPort>,
 }
 
 impl Serial {
     pub fn open(path: &str, baud: u32) -> Result<Self> {
-        let port = serialport::new(path, baud).timeout(TIMEOUT).open()?;
+        let port = serialport::new(path, baud).timeout(Duration::MAX).open()?;
         Ok(Self { port })
     }
 }

@@ -2,12 +2,10 @@
 
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::time::Duration;
 
 use crate::error::Result;
 use crate::transport::Transport;
 
-const TIMEOUT: Duration = Duration::from_secs(5);
 pub const DEFAULT_PORT: u16 = 9100;
 
 pub struct Tcp {
@@ -17,8 +15,6 @@ pub struct Tcp {
 impl Tcp {
     pub fn connect(addr: impl ToSocketAddrs) -> Result<Self> {
         let stream = TcpStream::connect(addr)?;
-        stream.set_write_timeout(Some(TIMEOUT))?;
-        stream.set_read_timeout(Some(TIMEOUT))?;
         Ok(Self { stream })
     }
 

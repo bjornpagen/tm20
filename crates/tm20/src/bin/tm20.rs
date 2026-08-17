@@ -5,7 +5,6 @@ use std::time::Instant;
 
 use tm20::identify::{InfoRequest, encode_process_id, parse_process_id, query_info};
 use tm20::status::{StatusRequest, encode_recover, encode_request, parse_status};
-use tm20::usb::WAIT_TIMEOUT;
 use tm20::{
     Transport, Usb, catalog, ean13_page, encode, find_case, hello, qr_page, ruler, text_page,
 };
@@ -271,7 +270,7 @@ fn dump_hex(bytes: &[u8]) {
 fn wait_done(usb: &mut Usb) -> tm20::Result<()> {
     usb.write(&encode_process_id(PROCESS_ID))?;
     let mut buf = [0u8; 64];
-    let n = usb.read_timeout(&mut buf, WAIT_TIMEOUT)?;
+    let n = usb.read(&mut buf)?;
     if n < 7 {
         return Err(tm20::IdentifyError::Unexpected {
             got: buf[..n].to_vec(),

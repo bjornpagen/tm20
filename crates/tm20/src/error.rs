@@ -156,12 +156,6 @@ impl fmt::Display for UsbError {
             },
             UsbError::NoBulkOut => write!(f, "no bulk OUT endpoint"),
             UsbError::Nusb(e) => write!(f, "{e}"),
-            UsbError::Transfer(e) if e.kind() == io::ErrorKind::TimedOut => {
-                write!(
-                    f,
-                    "USB timed out: printer is offline (orange !). Cover open, paper, or autocutter. Close the cover or power-cycle, then tm20 status"
-                )
-            }
             UsbError::Transfer(e) => write!(f, "{e}"),
         }
     }
