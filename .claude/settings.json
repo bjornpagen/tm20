@@ -1,0 +1,7 @@
+{
+  "sandbox": {
+    "network": {
+      "allowedDomains": ["github.com"]
+    }
+  }
+}
