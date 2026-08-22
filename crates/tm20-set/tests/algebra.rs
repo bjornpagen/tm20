@@ -1209,7 +1209,7 @@ fn code_hangs_by_the_grid() {
     let shift = leftmost_ink(&code) as i32 - leftmost_ink(&plain) as i32;
     assert!(
         (shift - GRID as i32).abs() <= 2,
-        "code hang {shift} should be GRID plus Commit Mono sidebearing"
+        "code hang {shift} should be GRID plus Menlo sidebearing"
     );
 }
 

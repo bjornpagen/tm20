@@ -1,8 +1,8 @@
 # tm20-set tests
 
 `cargo test -p tm20-set` does not need a printer. It loads a [`FaceTable`] from
-**Helvetica** (`/System/Library/Fonts/Helvetica.ttc`) and **Commit Mono** in
-`~/Library/Fonts`. CFF and glyf OpenType both parse; garbage bytes are
+**Helvetica** (`/System/Library/Fonts/Helvetica.ttc`) and **Menlo**
+(`/System/Library/Fonts/Menlo.ttc`). CFF and glyf OpenType both parse; garbage bytes are
 `Error::Font`.
 
 Constructor checks that do not need a face live next to the type. Compose

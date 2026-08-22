@@ -1,6 +1,6 @@
 # Code
 
-Fenced, hung, Commit Mono. Spaces do not wrap:
+Fenced, hung, Menlo. Spaces do not wrap:
 
 ```rust
 fn measure() -> u16 { 576 }

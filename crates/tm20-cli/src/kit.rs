@@ -1,7 +1,6 @@
 //! Faces this machine brings. The library only parses bytes.
 
 use std::io;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tm20_set::{Cut, Face, FaceTable};
@@ -9,6 +8,7 @@ use tm20_set::{Cut, Face, FaceTable};
 use crate::Result;
 
 const HELVETICA: &str = "/System/Library/Fonts/Helvetica.ttc";
+const MENLO: &str = "/System/Library/Fonts/Menlo.ttc";
 
 pub fn system_table() -> Result<FaceTable> {
     let bytes: Arc<[u8]> = std::fs::read(HELVETICA)
@@ -42,28 +42,28 @@ pub fn system_table() -> Result<FaceTable> {
             _ => {}
         }
     }
-    table.set_text(Cut::Mono, commit_mono()?);
+    let menlo: Arc<[u8]> = std::fs::read(MENLO)
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("{MENLO} not on this machine"),
+            )
+        })?
+        .into();
+    for index in 0.. {
+        let Ok(face) = Face::from_bytes_index(menlo.clone(), index) else {
+            break;
+        };
+        if face.postscript_name().as_deref() == Some("Menlo-Regular") {
+            table.set_text(Cut::Mono, face.text());
+            break;
+        }
+    }
     table.text(Cut::Roman)?;
     table.text(Cut::Italic)?;
     table.text(Cut::Bold)?;
     table.text(Cut::BoldItalic)?;
+    table.text(Cut::Mono)?;
     table.display(Cut::Roman)?;
     Ok(table)
-}
-
-pub fn fonts_dir() -> PathBuf {
-    let home = std::env::var_os("HOME").unwrap_or_default();
-    Path::new(&home).join("Library/Fonts")
-}
-
-fn commit_mono() -> Result<tm20_set::TextFace> {
-    let file = "CommitMono-400-Regular.otf";
-    let path = fonts_dir().join(file);
-    let bytes = std::fs::read(&path).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("{} not in {}", file, fonts_dir().display()),
-        )
-    })?;
-    Ok(Face::from_bytes(bytes)?.text())
 }

@@ -47,11 +47,18 @@ fn table() -> FaceTable {
 }
 
 fn load_mono() -> Face {
-    let file = "CommitMono-400-Regular.otf";
-    let home = std::env::var_os("HOME").unwrap_or_default();
-    let path = Path::new(&home).join("Library/Fonts").join(file);
-    let bytes = std::fs::read(&path).unwrap_or_else(|_| panic!("{file} not in {}", path.display()));
-    Face::from_bytes(bytes).unwrap_or_else(|_| panic!("{file} is OpenType"))
+    let bytes: Arc<[u8]> = std::fs::read("/System/Library/Fonts/Menlo.ttc")
+        .expect("Menlo.ttc")
+        .into();
+    for index in 0.. {
+        let Ok(face) = Face::from_bytes_index(bytes.clone(), index) else {
+            break;
+        };
+        if face.postscript_name().as_deref() == Some("Menlo-Regular") {
+            return face;
+        }
+    }
+    panic!("Menlo-Regular not in Menlo.ttc")
 }
 
 fn markdown_files() -> Vec<PathBuf> {
