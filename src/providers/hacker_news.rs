@@ -20,6 +20,7 @@ const DEFAULT_RANK_LIMIT: usize = 30;
 pub struct HnCursor {
     pub max_item: u64,
     pub ranked: Vec<u64>,
+    pub pending_null: Vec<u64>,
 }
 
 impl CursorCodec for HnCursor {
@@ -41,23 +42,24 @@ pub struct HnItem {
     pub deleted: bool,
     #[serde(default)]
     pub dead: bool,
-    #[serde(rename = "type")]
-    pub item_type: String,
+    #[serde(rename = "type", default)]
+    pub item_type: Option<String>,
     #[serde(default)]
-    pub by: String,
-    pub time: i64,
+    pub by: Option<String>,
     #[serde(default)]
-    pub title: String,
+    pub time: Option<i64>,
     #[serde(default)]
-    pub text: String,
+    pub title: Option<String>,
     #[serde(default)]
-    pub url: String,
+    pub text: Option<String>,
     #[serde(default)]
-    pub score: i64,
+    pub url: Option<String>,
     #[serde(default)]
-    pub descendants: u64,
+    pub score: Option<i64>,
     #[serde(default)]
-    pub parent: u64,
+    pub descendants: Option<u64>,
+    #[serde(default)]
+    pub parent: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,24 +71,24 @@ pub struct HnEvent {
 impl From<HnEvent> for NormalizedObservation {
     fn from(event: HnEvent) -> Self {
         let id = event.item.id.to_be_bytes();
-        let parent = event.item.parent.to_be_bytes();
-        let time = event.item.time.to_be_bytes();
-        let score = event.item.score.to_be_bytes();
-        let descendants = event.item.descendants.to_be_bytes();
+        let parent = event.item.parent.unwrap_or(event.item.id).to_be_bytes();
+        let time = event.item.time.unwrap_or_default().to_be_bytes();
+        let score = event.item.score.unwrap_or_default().to_be_bytes();
+        let descendants = event.item.descendants.unwrap_or_default().to_be_bytes();
         let status = [u8::from(event.item.deleted), u8::from(event.item.dead)];
         let payload = serde_json::to_vec(&event.item).expect("HnItem is JSON-safe");
         Self {
             account: digest("hn-account", b"public"),
             object: digest("hn-item", id),
-            thread: if event.item.parent == 0 {
-                digest("hn-thread", id)
-            } else {
-                digest("hn-thread", parent)
-            },
+            thread: digest("hn-thread", parent),
             event: digest_parts("hn-event", &[&id, &time, &score, &descendants, &status]),
             payload: digest("hn-payload", payload),
             kind: event.kind,
-            occurred_at: event.item.time.saturating_mul(1_000),
+            occurred_at: if event.kind == ObservationKind::Created {
+                event.item.time.unwrap_or_default().saturating_mul(1_000)
+            } else {
+                0
+            },
         }
     }
 }
@@ -169,6 +171,13 @@ where
             .unwrap_or_default();
         let mut candidates = Vec::new();
         let mut seen = HashSet::new();
+        if let Some(cursor) = cursor {
+            for id in &cursor.pending_null {
+                if seen.insert(*id) {
+                    candidates.push((*id, ObservationKind::Updated));
+                }
+            }
+        }
         for id in &ranked {
             if (cursor.is_none() || !previous_ranked.contains(id)) && seen.insert(*id) {
                 let kind = if cursor.is_none() {
@@ -188,13 +197,18 @@ where
         }
 
         let mut observations = Vec::with_capacity(candidates.len());
+        let mut pending_null = Vec::new();
         for (id, initial_kind) in candidates {
-            let item: HnItem = self
+            let item: Option<HnItem> = self
                 .http
                 .execute(HttpRequest::get(format!("/v0/item/{id}.json")))
                 .map_err(|error| provider_error("hacker-news", error))?
                 .json()
                 .map_err(|error| provider_error("hacker-news", error))?;
+            let Some(item) = item else {
+                pending_null.push(id);
+                continue;
+            };
             if item.id != id {
                 return Err(ProviderError::Protocol {
                     provider: "hacker-news",
@@ -211,7 +225,11 @@ where
 
         Ok(TypedPullBatch {
             observations,
-            next_cursor: HnCursor { max_item, ranked },
+            next_cursor: HnCursor {
+                max_item,
+                ranked,
+                pending_null,
+            },
         })
     }
 
@@ -232,15 +250,15 @@ mod tests {
             id,
             deleted: false,
             dead: false,
-            item_type: "story".into(),
-            by: "ada".into(),
-            time: 1_700_000_000,
-            title: title.into(),
-            text: String::new(),
-            url: format!("https://example.com/{id}"),
-            score: 10,
-            descendants: 2,
-            parent: 0,
+            item_type: Some("story".into()),
+            by: Some("ada".into()),
+            time: Some(1_700_000_000),
+            title: Some(title.into()),
+            text: None,
+            url: Some(format!("https://example.com/{id}")),
+            score: Some(10),
+            descendants: Some(2),
+            parent: None,
         }
     }
 
@@ -272,6 +290,7 @@ mod tests {
         let batch = connector.pull(None).expect("pull");
         assert_eq!(batch.observations.len(), 2);
         assert_eq!(batch.next_cursor.max_item, 42);
+        assert!(batch.next_cursor.pending_null.is_empty());
         assert_eq!(
             connector.into_inner().finish().expect("transcript").len(),
             4

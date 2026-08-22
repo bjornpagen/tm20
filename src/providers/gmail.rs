@@ -42,7 +42,7 @@ impl GmailAccount {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GmailCursor {
     pub history_id: String,
@@ -96,11 +96,25 @@ pub struct GmailHistory {
     pub id: String,
     #[serde(default)]
     pub messages_added: Vec<GmailMessageAdded>,
+    #[serde(default)]
+    pub messages_deleted: Vec<GmailMessageAdded>,
+    #[serde(default)]
+    pub labels_added: Vec<GmailLabelChange>,
+    #[serde(default)]
+    pub labels_removed: Vec<GmailLabelChange>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GmailMessageAdded {
     pub message: GmailMessageRef,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GmailLabelChange {
+    pub message: GmailMessageRef,
+    #[serde(default)]
+    pub label_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,11 +129,10 @@ pub struct GmailMessageRef {
 pub struct GmailMessage {
     pub id: String,
     pub thread_id: String,
+    pub history_id: String,
     #[serde(default)]
     pub label_ids: Vec<String>,
     pub internal_date: String,
-    #[serde(default)]
-    pub snippet: String,
     pub payload: GmailPayload,
 }
 
@@ -140,16 +153,47 @@ pub struct GmailEvent {
     account: GmailAccount,
     history_id: String,
     pub message: GmailMessage,
+    pub change: GmailChange,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "labels", rename_all = "snake_case")]
+pub enum GmailChange {
+    Added,
+    Deleted,
+    LabelsAdded(Vec<String>),
+    LabelsRemoved(Vec<String>),
 }
 
 impl From<GmailEvent> for NormalizedObservation {
     fn from(event: GmailEvent) -> Self {
-        let payload = serde_json::to_vec(&event.message).expect("GmailMessage is JSON-safe");
+        let payload =
+            serde_json::to_vec(&(&event.message, &event.change)).expect("Gmail event is JSON-safe");
         let occurred_at = event
             .message
             .internal_date
             .parse::<i64>()
             .unwrap_or_default();
+        let (kind, change) = match &event.change {
+            GmailChange::Added => (ObservationKind::Created, b"added".as_slice()),
+            GmailChange::Deleted => (ObservationKind::Deleted, b"deleted".as_slice()),
+            GmailChange::LabelsAdded(labels) => {
+                let kind = if labels.iter().any(|label| label == "UNREAD") {
+                    ObservationKind::ReadStateChanged
+                } else {
+                    ObservationKind::Updated
+                };
+                (kind, b"labels-added".as_slice())
+            }
+            GmailChange::LabelsRemoved(labels) => {
+                let kind = if labels.iter().any(|label| label == "UNREAD") {
+                    ObservationKind::ReadStateChanged
+                } else {
+                    ObservationKind::Updated
+                };
+                (kind, b"labels-removed".as_slice())
+            }
+        };
         Self {
             account: digest("gmail-account", event.account.as_str()),
             object: digest_parts(
@@ -168,10 +212,15 @@ impl From<GmailEvent> for NormalizedObservation {
             ),
             event: digest_parts(
                 "gmail-event",
-                &[event.history_id.as_bytes(), event.message.id.as_bytes()],
+                &[
+                    event.history_id.as_bytes(),
+                    change,
+                    event.message.id.as_bytes(),
+                    &payload,
+                ],
             ),
             payload: digest("gmail-payload", payload),
-            kind: ObservationKind::Created,
+            kind,
             occurred_at,
         }
     }
@@ -207,7 +256,8 @@ impl TryFrom<EffectRequest> for GmailEffect {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModifyMessage {
-    pub remove_label_ids: [&'static str; 1],
+    pub remove_label_ids: Vec<String>,
+    pub add_label_ids: Vec<String>,
 }
 
 pub struct GmailConnector<T> {
@@ -234,10 +284,13 @@ where
         self.http
             .execute(
                 HttpRequest::get(format!("/gmail/v1/users/me/messages/{id}"))
-                    .query("format", "metadata")
+                    .query("format", "METADATA")
                     .query("metadataHeaders", "From")
+                    .query("metadataHeaders", "To")
+                    .query("metadataHeaders", "Cc")
                     .query("metadataHeaders", "Subject")
-                    .query("metadataHeaders", "Date"),
+                    .query("metadataHeaders", "Date")
+                    .query("metadataHeaders", "Message-ID"),
             )
             .map_err(|error| provider_error("gmail", error))?
             .json()
@@ -274,6 +327,7 @@ where
                 account: self.account.clone(),
                 history_id: profile.history_id.clone(),
                 message,
+                change: GmailChange::Added,
             });
         }
         Ok(TypedPullBatch {
@@ -294,8 +348,11 @@ where
         let latest_history = loop {
             let mut request = HttpRequest::get("/gmail/v1/users/me/history")
                 .query("startHistoryId", cursor.history_id.clone())
+                .query("maxResults", "500")
                 .query("historyTypes", "messageAdded")
-                .query("labelId", "INBOX");
+                .query("historyTypes", "messageDeleted")
+                .query("historyTypes", "labelAdded")
+                .query("historyTypes", "labelRemoved");
             if let Some(token) = &page_token {
                 request = request.query("pageToken", token);
             }
@@ -307,10 +364,27 @@ where
                 .map_err(|error| provider_error("gmail", error))?;
             let page_history = page.history_id;
             for history in page.history {
-                for added in history.messages_added {
-                    if seen.insert(added.message.id.clone()) {
-                        message_ids.push((history.id.clone(), added.message.id));
+                let mut push = |reference: GmailMessageRef, change: GmailChange| {
+                    let key = (reference.id.clone(), change.clone());
+                    if seen.insert(key) {
+                        message_ids.push((history.id.clone(), reference.id, change));
                     }
+                };
+                for added in history.messages_added {
+                    push(added.message, GmailChange::Added);
+                }
+                for deleted in history.messages_deleted {
+                    push(deleted.message, GmailChange::Deleted);
+                }
+                for labels in history.labels_added {
+                    let mut label_ids = labels.label_ids;
+                    label_ids.sort();
+                    push(labels.message, GmailChange::LabelsAdded(label_ids));
+                }
+                for labels in history.labels_removed {
+                    let mut label_ids = labels.label_ids;
+                    label_ids.sort();
+                    push(labels.message, GmailChange::LabelsRemoved(label_ids));
                 }
             }
             match page.next_page_token {
@@ -319,12 +393,13 @@ where
             }
         };
         let mut observations = Vec::with_capacity(message_ids.len());
-        for (history_id, message_id) in message_ids {
+        for (history_id, message_id, change) in message_ids {
             let message = self.fetch_message(&message_id)?;
             observations.push(GmailEvent {
                 account: self.account.clone(),
                 history_id,
                 message,
+                change,
             });
         }
         Ok(TypedPullBatch {
@@ -371,7 +446,8 @@ where
                 HttpRequest::post_json(
                     format!("/gmail/v1/users/me/messages/{}/modify", effect.message_id),
                     ModifyMessage {
-                        remove_label_ids: ["UNREAD"],
+                        remove_label_ids: vec!["UNREAD".into()],
+                        add_label_ids: Vec::new(),
                     },
                 )
                 .map_err(|error| provider_error("gmail", error))?,
@@ -399,9 +475,9 @@ mod tests {
         GmailMessage {
             id: "18d00a".into(),
             thread_id: "thread-1".into(),
+            history_id: "101".into(),
             label_ids: vec!["INBOX".into(), "UNREAD".into()],
             internal_date: "1700000000000".into(),
-            snippet: "Build is green".into(),
             payload: GmailPayload {
                 headers: vec![
                     GmailHeader {
@@ -426,8 +502,11 @@ mod tests {
         http.expect_json(
             HttpRequest::get("/gmail/v1/users/me/history")
                 .query("startHistoryId", "100")
+                .query("maxResults", "500")
                 .query("historyTypes", "messageAdded")
-                .query("labelId", "INBOX"),
+                .query("historyTypes", "messageDeleted")
+                .query("historyTypes", "labelAdded")
+                .query("historyTypes", "labelRemoved"),
             200,
             GmailHistoryResponse {
                 history: vec![GmailHistory {
@@ -438,6 +517,9 @@ mod tests {
                             thread_id: "thread-1".into(),
                         },
                     }],
+                    messages_deleted: Vec::new(),
+                    labels_added: Vec::new(),
+                    labels_removed: Vec::new(),
                 }],
                 history_id: "101".into(),
                 next_page_token: None,
@@ -446,10 +528,13 @@ mod tests {
         .expect("history");
         http.expect_json(
             HttpRequest::get("/gmail/v1/users/me/messages/18d00a")
-                .query("format", "metadata")
+                .query("format", "METADATA")
                 .query("metadataHeaders", "From")
+                .query("metadataHeaders", "To")
+                .query("metadataHeaders", "Cc")
                 .query("metadataHeaders", "Subject")
-                .query("metadataHeaders", "Date"),
+                .query("metadataHeaders", "Date")
+                .query("metadataHeaders", "Message-ID"),
             200,
             message(),
         )
@@ -462,7 +547,8 @@ mod tests {
             HttpRequest::post_json(
                 "/gmail/v1/users/me/messages/18d00a/modify",
                 ModifyMessage {
-                    remove_label_ids: ["UNREAD"],
+                    remove_label_ids: vec!["UNREAD".into()],
+                    add_label_ids: Vec::new(),
                 },
             )
             .expect("request"),

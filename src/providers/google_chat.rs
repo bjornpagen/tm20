@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use time::OffsetDateTime;
+use time::{Duration, OffsetDateTime};
 use time::format_description::well_known::Rfc3339;
 
 use crate::connector::{
@@ -11,13 +11,14 @@ use crate::connector::{
     EffectOutcome, EffectRequest, NormalizedObservation, ObservationKind, SourceClass,
     TypedConnector, TypedPullBatch,
 };
-use crate::providers::{ProviderError, digest, provider_error};
+use crate::providers::{ProviderError, digest, digest_parts, provider_error};
 use crate::transport::{HttpRequest, HttpTransport};
 
 const KEY: ConnectorKey = ConnectorKey::new("google-chat");
 const CAPABILITIES: &[Capability] = &[Capability::Reconcile];
 const EPOCH: &str = "1970-01-01T00:00:00Z";
-const EVENT_TYPES: &str = "google.workspace.chat.message.v1.created,google.workspace.chat.message.v1.updated,google.workspace.chat.message.v1.deleted";
+const EVENT_FILTER: &str = "(eventTypes:\"google.workspace.chat.message.v1.created\" OR eventTypes:\"google.workspace.chat.message.v1.updated\" OR eventTypes:\"google.workspace.chat.message.v1.deleted\")";
+const OVERLAP: Duration = Duration::seconds(60);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatWatermark {
@@ -57,7 +58,23 @@ pub struct ChatSpaceEvent {
     pub name: String,
     pub event_time: String,
     pub event_type: String,
-    pub message: ChatMessage,
+    pub payload: ChatEventPayload,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "shape", rename_all = "snake_case")]
+pub enum ChatEventPayload {
+    Single { message: ChatMessage },
+    Batch { messages: Vec<ChatMessage> },
+}
+
+impl ChatEventPayload {
+    fn into_messages(self) -> Vec<ChatMessage> {
+        match self {
+            Self::Single { message } => vec![message],
+            Self::Batch { messages } => messages,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,24 +106,29 @@ pub struct ChatUser {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GoogleChatEvent {
     user: Box<str>,
-    event: ChatSpaceEvent,
+    event_name: String,
+    event_type: String,
+    message: ChatMessage,
     occurred_at: i64,
 }
 
 impl From<GoogleChatEvent> for NormalizedObservation {
     fn from(event: GoogleChatEvent) -> Self {
-        let payload = serde_json::to_vec(&event.event.message).expect("ChatMessage is JSON-safe");
-        let kind = match event.event.event_type.as_str() {
+        let payload = serde_json::to_vec(&event.message).expect("ChatMessage is JSON-safe");
+        let kind = match event.event_type.as_str() {
             "google.workspace.chat.message.v1.updated" => ObservationKind::Updated,
             "google.workspace.chat.message.v1.deleted" => ObservationKind::Deleted,
-            _ if !event.event.message.argument_text.is_empty() => ObservationKind::Mentioned,
+            _ if !event.message.argument_text.is_empty() => ObservationKind::Mentioned,
             _ => ObservationKind::Created,
         };
         Self {
             account: digest("gchat-user", event.user.as_bytes()),
-            object: digest("gchat-message", event.event.message.name.as_bytes()),
-            thread: digest("gchat-thread", event.event.message.thread.name.as_bytes()),
-            event: digest("gchat-event", event.event.name.as_bytes()),
+            object: digest("gchat-message", event.message.name.as_bytes()),
+            thread: digest("gchat-thread", event.message.thread.name.as_bytes()),
+            event: digest_parts(
+                "gchat-event",
+                &[event.event_name.as_bytes(), event.message.name.as_bytes()],
+            ),
             payload: digest("gchat-payload", payload),
             kind,
             occurred_at: event.occurred_at,
@@ -114,15 +136,28 @@ impl From<GoogleChatEvent> for NormalizedObservation {
     }
 }
 
-fn parse_millis(value: &str) -> Result<i64, ProviderError> {
-    let time = OffsetDateTime::parse(value, &Rfc3339).map_err(|error| ProviderError::Protocol {
+fn parse_time(value: &str) -> Result<OffsetDateTime, ProviderError> {
+    OffsetDateTime::parse(value, &Rfc3339).map_err(|error| ProviderError::Protocol {
         provider: "google-chat",
         reason: format!("eventTime is not RFC3339: {error}"),
-    })?;
+    })
+}
+
+fn parse_millis(value: &str) -> Result<i64, ProviderError> {
+    let time = parse_time(value)?;
     i64::try_from(time.unix_timestamp_nanos() / 1_000_000).map_err(|_| ProviderError::Protocol {
         provider: "google-chat",
         reason: "eventTime does not fit i64 milliseconds".into(),
     })
+}
+
+fn overlap_start(value: &str) -> Result<String, ProviderError> {
+    (parse_time(value)? - OVERLAP)
+        .format(&Rfc3339)
+        .map_err(|error| ProviderError::Protocol {
+            provider: "google-chat",
+            reason: format!("could not format overlap start: {error}"),
+        })
 }
 
 #[derive(Debug)]
@@ -140,6 +175,7 @@ pub struct GoogleChatConnector<T> {
     http: T,
     user: Box<str>,
     spaces: Vec<Box<str>>,
+    poll_end: Box<str>,
 }
 
 impl<T> GoogleChatConnector<T> {
@@ -147,16 +183,28 @@ impl<T> GoogleChatConnector<T> {
         http: T,
         user: impl Into<Box<str>>,
         spaces: impl IntoIterator<Item = impl Into<Box<str>>>,
+        poll_end: impl Into<Box<str>>,
     ) -> Result<Self, ProviderError> {
         let user = user.into();
         let spaces: Vec<Box<str>> = spaces.into_iter().map(Into::into).collect();
-        if user.is_empty() || spaces.is_empty() || spaces.iter().any(|space| space.is_empty()) {
+        let poll_end = poll_end.into();
+        parse_millis(&poll_end)?;
+        if user.is_empty()
+            || spaces.is_empty()
+            || spaces.iter().any(|space| space.is_empty())
+            || poll_end.is_empty()
+        {
             return Err(ProviderError::Protocol {
                 provider: "google-chat",
                 reason: "user and selected spaces must be nonempty".into(),
             });
         }
-        Ok(Self { http, user, spaces })
+        Ok(Self {
+            http,
+            user,
+            spaces,
+            poll_end,
+        })
     }
 
     #[must_use]
@@ -198,12 +246,16 @@ where
                 .get(space.as_ref())
                 .cloned()
                 .unwrap_or_else(|| EPOCH.to_owned());
+            let start = overlap_start(&after)?;
             let mut page = String::new();
             loop {
+                let filter = format!(
+                    "startTime=\"{start}\" AND endTime=\"{}\" AND {EVENT_FILTER}",
+                    self.poll_end
+                );
                 let mut request = HttpRequest::get(format!("/chat/v1/{space}/spaceEvents"))
-                    .query("filter", format!("eventTime > \"{after}\""))
-                    .query("eventTypes", EVENT_TYPES)
-                    .query("pageSize", "1000");
+                    .query("pageSize", "100")
+                    .query("filter", filter);
                 if !page.is_empty() {
                     request = request.query("pageToken", page.clone());
                 }
@@ -215,25 +267,29 @@ where
                     .map_err(|error| provider_error("google-chat", error))?;
                 for event in response.space_events {
                     let occurred_at = parse_millis(&event.event_time)?;
-                    watermarks
-                        .entry(space.to_string())
-                        .and_modify(|time| {
-                            if event.event_time > *time {
-                                time.clone_from(&event.event_time);
-                            }
-                        })
-                        .or_insert_with(|| event.event_time.clone());
-                    observations.push(GoogleChatEvent {
-                        user: self.user.clone(),
-                        event,
-                        occurred_at,
-                    });
+                    let messages = event.payload.into_messages();
+                    if messages.is_empty() {
+                        return Err(ProviderError::Protocol {
+                            provider: "google-chat",
+                            reason: "space event batch is empty".into(),
+                        });
+                    }
+                    for message in messages {
+                        observations.push(GoogleChatEvent {
+                            user: self.user.clone(),
+                            event_name: event.name.clone(),
+                            event_type: event.event_type.clone(),
+                            message,
+                            occurred_at,
+                        });
+                    }
                 }
                 page = response.next_page_token;
                 if page.is_empty() {
                     break;
                 }
             }
+            watermarks.insert(space.to_string(), self.poll_end.to_string());
         }
         let mut watermarks: Vec<ChatWatermark> = watermarks
             .into_iter()
@@ -263,7 +319,8 @@ mod tests {
             name: "spaces/AAA/spaceEvents/1".into(),
             event_time: "2026-08-22T15:00:00Z".into(),
             event_type: "google.workspace.chat.message.v1.created".into(),
-            message: ChatMessage {
+            payload: ChatEventPayload::Single {
+                message: ChatMessage {
                 name: "spaces/AAA/messages/1".into(),
                 thread: ChatThread {
                     name: "spaces/AAA/threads/1".into(),
@@ -276,14 +333,20 @@ mod tests {
                 last_update_time: "2026-08-22T15:00:00Z".into(),
                 text: "Build is green".into(),
                 argument_text: String::new(),
+                },
             },
         };
         let mut http = MockHttp::new();
+        let poll_end = "2026-08-22T15:01:00Z";
         http.expect_json(
             HttpRequest::get("/chat/v1/spaces/AAA/spaceEvents")
-                .query("filter", "eventTime > \"1970-01-01T00:00:00Z\"")
-                .query("eventTypes", EVENT_TYPES)
-                .query("pageSize", "1000"),
+                .query("pageSize", "100")
+                .query(
+                    "filter",
+                    format!(
+                        "startTime=\"1969-12-31T23:59:00Z\" AND endTime=\"{poll_end}\" AND {EVENT_FILTER}"
+                    ),
+                ),
             200,
             SpaceEventsResponse {
                 space_events: vec![event],
@@ -291,11 +354,17 @@ mod tests {
             },
         )
         .expect("events");
-        let mut connector =
-            GoogleChatConnector::new(http, "users/me", ["spaces/AAA"]).expect("connector");
+        let mut connector = GoogleChatConnector::new(
+            http,
+            "users/me",
+            ["spaces/AAA"],
+            poll_end,
+        )
+        .expect("connector");
         let batch = connector.pull(None).expect("pull");
         assert_eq!(batch.observations.len(), 1);
         assert_eq!(batch.next_cursor.watermarks.len(), 1);
+        assert_eq!(batch.next_cursor.watermarks[0].event_time, poll_end);
         assert_eq!(
             connector.into_inner().finish().expect("transcript").len(),
             1

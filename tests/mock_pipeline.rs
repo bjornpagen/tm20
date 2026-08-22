@@ -17,9 +17,9 @@ fn message(unread: bool) -> GmailMessage {
     GmailMessage {
         id: "18d00a".into(),
         thread_id: "thread-1".into(),
+        history_id: "101".into(),
         label_ids,
         internal_date: "1700000000000".into(),
-        snippet: "The private body must not reach metadata-only paper.".into(),
         payload: GmailPayload {
             headers: vec![
                 GmailHeader {
@@ -44,8 +44,11 @@ fn gmail_fixture() -> (
     http.expect_json(
         HttpRequest::get("/gmail/v1/users/me/history")
             .query("startHistoryId", "100")
+            .query("maxResults", "500")
             .query("historyTypes", "messageAdded")
-            .query("labelId", "INBOX"),
+            .query("historyTypes", "messageDeleted")
+            .query("historyTypes", "labelAdded")
+            .query("historyTypes", "labelRemoved"),
         200,
         GmailHistoryResponse {
             history: vec![GmailHistory {
@@ -56,6 +59,9 @@ fn gmail_fixture() -> (
                         thread_id: "thread-1".into(),
                     },
                 }],
+                messages_deleted: Vec::new(),
+                labels_added: Vec::new(),
+                labels_removed: Vec::new(),
             }],
             history_id: "101".into(),
             next_page_token: None,
@@ -64,10 +70,13 @@ fn gmail_fixture() -> (
     .expect("history fixture");
     http.expect_json(
         HttpRequest::get("/gmail/v1/users/me/messages/18d00a")
-            .query("format", "metadata")
+            .query("format", "METADATA")
             .query("metadataHeaders", "From")
+            .query("metadataHeaders", "To")
+            .query("metadataHeaders", "Cc")
             .query("metadataHeaders", "Subject")
-            .query("metadataHeaders", "Date"),
+            .query("metadataHeaders", "Date")
+            .query("metadataHeaders", "Message-ID"),
         200,
         message(true),
     )
@@ -78,7 +87,8 @@ fn gmail_fixture() -> (
         HttpRequest::post_json(
             "/gmail/v1/users/me/messages/18d00a/modify",
             ModifyMessage {
-                remove_label_ids: ["UNREAD"],
+                remove_label_ids: vec!["UNREAD".into()],
+                add_label_ids: Vec::new(),
             },
         )
         .expect("modify request"),

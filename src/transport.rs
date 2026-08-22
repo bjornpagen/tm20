@@ -16,6 +16,7 @@ use serde_json::Value;
 pub enum HttpMethod {
     Get,
     Post,
+    Put,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,8 +54,23 @@ impl HttpRequest {
         path: impl Into<String>,
         body: impl Serialize,
     ) -> Result<Self, TransportError> {
+        Self::json(HttpMethod::Post, path, body)
+    }
+
+    pub fn put_json(
+        path: impl Into<String>,
+        body: impl Serialize,
+    ) -> Result<Self, TransportError> {
+        Self::json(HttpMethod::Put, path, body)
+    }
+
+    fn json(
+        method: HttpMethod,
+        path: impl Into<String>,
+        body: impl Serialize,
+    ) -> Result<Self, TransportError> {
         Ok(Self {
-            method: HttpMethod::Post,
+            method,
             path: path.into(),
             query: Vec::new(),
             body: RequestBody::Json(

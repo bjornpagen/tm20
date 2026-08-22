@@ -8,8 +8,6 @@
 use std::collections::{HashSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
-use time::OffsetDateTime;
-use time::format_description::well_known::Rfc3339;
 
 use crate::connector::{
     Capability, ConnectorDescriptor, ConnectorError, ConnectorKey, CursorCodec, CursorToken,
@@ -29,7 +27,8 @@ const PROTOCOL_VERSION: u16 = 1;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IMessageCursor {
     pub bridge_id: String,
-    pub sequence: u64,
+    pub store_id: String,
+    pub after: String,
 }
 
 impl CursorCodec for IMessageCursor {
@@ -47,7 +46,9 @@ impl CursorCodec for IMessageCursor {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BridgeInfo {
     pub bridge_id: String,
+    pub store_id: String,
     pub protocol_version: u16,
+    pub event_head: String,
     pub capabilities: Vec<BridgeCapability>,
 }
 
@@ -63,15 +64,15 @@ pub enum BridgeCapability {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BridgeEventPage {
     pub events: Vec<BridgeEvent>,
-    pub next_sequence: u64,
+    pub next_cursor: String,
     pub has_more: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BridgeEvent {
-    pub sequence: u64,
+    pub cursor: String,
     pub event_id: String,
-    pub occurred_at: String,
+    pub occurred_at_ms: i64,
     pub kind: BridgeEventKind,
 }
 
@@ -120,7 +121,7 @@ pub struct IMessage {
     pub id: String,
     pub conversation_id: String,
     pub sender: String,
-    pub sent_at: String,
+    pub sent_at_ms: i64,
     pub text: String,
     pub attachments: Vec<Attachment>,
 }
@@ -147,6 +148,7 @@ pub enum Tapback {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IMessageEvent {
     bridge_id: Box<str>,
+    store_id: Box<str>,
     event: BridgeEvent,
     occurred_at: i64,
 }
@@ -156,16 +158,34 @@ impl From<IMessageEvent> for NormalizedObservation {
         let (conversation, message, kind) = event_coordinates(&value.event.kind);
         let payload = serde_json::to_vec(&value.event.kind).expect("BridgeEventKind is JSON-safe");
         Self {
-            account: digest("imessage-bridge", value.bridge_id.as_bytes()),
+            account: digest_parts(
+                "imessage-store",
+                &[value.bridge_id.as_bytes(), value.store_id.as_bytes()],
+            ),
             object: digest_parts(
                 "imessage-message",
-                &[value.bridge_id.as_bytes(), message.as_bytes()],
+                &[
+                    value.bridge_id.as_bytes(),
+                    value.store_id.as_bytes(),
+                    message.as_bytes(),
+                ],
             ),
             thread: digest_parts(
                 "imessage-conversation",
-                &[value.bridge_id.as_bytes(), conversation.as_bytes()],
+                &[
+                    value.bridge_id.as_bytes(),
+                    value.store_id.as_bytes(),
+                    conversation.as_bytes(),
+                ],
             ),
-            event: digest("imessage-event", value.event.event_id.as_bytes()),
+            event: digest_parts(
+                "imessage-event",
+                &[
+                    value.bridge_id.as_bytes(),
+                    value.store_id.as_bytes(),
+                    value.event.event_id.as_bytes(),
+                ],
+            ),
             payload: digest("imessage-payload", payload),
             kind,
             occurred_at: value.occurred_at,
@@ -216,17 +236,6 @@ fn event_coordinates(kind: &BridgeEventKind) -> (&str, &str, ObservationKind) {
     }
 }
 
-fn parse_millis(value: &str) -> Result<i64, ProviderError> {
-    let time = OffsetDateTime::parse(value, &Rfc3339).map_err(|error| ProviderError::Protocol {
-        provider: "imessage",
-        reason: format!("event time is not RFC3339: {error}"),
-    })?;
-    i64::try_from(time.unix_timestamp_nanos() / 1_000_000).map_err(|_| ProviderError::Protocol {
-        provider: "imessage",
-        reason: "event time does not fit i64 milliseconds".into(),
-    })
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IMessageReadReceipt {
     conversation_id: Box<str>,
@@ -261,8 +270,8 @@ impl TryFrom<EffectRequest> for IMessageReadReceipt {
 
 #[derive(Debug, Serialize)]
 pub struct ReadReceiptRequest<'a> {
+    pub conversation_id: &'a str,
     pub through_message_id: &'a str,
-    pub idempotency_key: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -276,7 +285,7 @@ pub enum ReceiptStatus {
 pub struct ReadReceiptResponse {
     pub receipt_id: String,
     pub status: ReceiptStatus,
-    pub applied_at: String,
+    pub applied_at_ms: i64,
 }
 
 pub struct IMessageConnector<T> {
@@ -330,7 +339,7 @@ where
     ) -> Result<TypedPullBatch<Self::Cursor, Self::Event>, Self::Error> {
         let info: BridgeInfo = self
             .http
-            .execute(HttpRequest::get("/bridge/v1/info"))
+            .execute(HttpRequest::get("/v1/bridge"))
             .map_err(|error| provider_error("imessage", error))?
             .json()
             .map_err(|error| provider_error("imessage", error))?;
@@ -342,64 +351,66 @@ where
                 reason: "bridge protocol version or backfill capability is incompatible".into(),
             });
         }
-        if cursor.is_some_and(|cursor| cursor.bridge_id != info.bridge_id) {
+        if cursor.is_some_and(|cursor| {
+            cursor.bridge_id != info.bridge_id || cursor.store_id != info.store_id
+        }) {
             return Err(ProviderError::Cursor {
                 provider: "imessage",
-                reason: "bridge identity changed",
+                reason: "bridge or message-store identity changed",
             });
         }
-        let start = cursor.map_or(0, |cursor| cursor.sequence);
-        let mut after = start;
+        let mut after = cursor.map_or_else(|| "origin".to_owned(), |cursor| cursor.after.clone());
         let mut events = Vec::new();
         let mut seen = HashSet::new();
-        while let Some(event) = self.pushed.pop_front() {
-            if event.sequence > start && seen.insert(event.event_id.clone()) {
-                events.push(event);
-            }
-        }
+        self.pushed.clear();
         loop {
             let page: BridgeEventPage = self
                 .http
                 .execute(
-                    HttpRequest::get("/bridge/v1/events")
-                        .query("after", after.to_string())
+                    HttpRequest::get("/v1/events")
+                        .query("after", after.clone())
                         .query("limit", "500"),
                 )
                 .map_err(|error| provider_error("imessage", error))?
                 .json()
                 .map_err(|error| provider_error("imessage", error))?;
             for event in page.events {
-                if event.sequence <= after {
+                if event.cursor.is_empty() || event.event_id.is_empty() {
                     return Err(ProviderError::Protocol {
                         provider: "imessage",
-                        reason: "event sequence did not advance".into(),
+                        reason: "event cursor and identity must be nonempty".into(),
                     });
                 }
                 if seen.insert(event.event_id.clone()) {
                     events.push(event);
                 }
             }
-            after = page.next_sequence;
+            if page.next_cursor.is_empty() || (page.has_more && page.next_cursor == after) {
+                return Err(ProviderError::Protocol {
+                    provider: "imessage",
+                    reason: "event page cursor did not advance".into(),
+                });
+            }
+            after = page.next_cursor;
             if !page.has_more {
                 break;
             }
         }
-        events.sort_by_key(|event| event.sequence);
         let observations = events
             .into_iter()
-            .map(|event| {
-                Ok(IMessageEvent {
-                    bridge_id: info.bridge_id.clone().into(),
-                    occurred_at: parse_millis(&event.occurred_at)?,
-                    event,
-                })
+            .map(|event| IMessageEvent {
+                bridge_id: info.bridge_id.clone().into(),
+                store_id: info.store_id.clone().into(),
+                occurred_at: event.occurred_at_ms,
+                event,
             })
-            .collect::<Result<Vec<_>, ProviderError>>()?;
+            .collect();
         Ok(TypedPullBatch {
             observations,
             next_cursor: IMessageCursor {
                 bridge_id: info.bridge_id,
-                sequence: after,
+                store_id: info.store_id,
+                after,
             },
         })
     }
@@ -408,14 +419,11 @@ where
         let response: ReadReceiptResponse = self
             .http
             .execute(
-                HttpRequest::post_json(
-                    format!(
-                        "/bridge/v1/conversations/{}/read-receipts",
-                        effect.conversation_id
-                    ),
+                HttpRequest::put_json(
+                    format!("/v1/read-receipts/{}", hex(&effect.idempotency.0)),
                     ReadReceiptRequest {
+                        conversation_id: &effect.conversation_id,
                         through_message_id: &effect.through_message_id,
-                        idempotency_key: hex(&effect.idempotency.0),
                     },
                 )
                 .map_err(|error| provider_error("imessage", error))?,
@@ -451,7 +459,9 @@ mod tests {
     fn info() -> BridgeInfo {
         BridgeInfo {
             bridge_id: "phone-1".into(),
+            store_id: "store-1".into(),
             protocol_version: 1,
+            event_head: "cursor-1".into(),
             capabilities: vec![
                 BridgeCapability::EventBackfill,
                 BridgeCapability::PushEvents,
@@ -463,15 +473,15 @@ mod tests {
 
     fn event() -> BridgeEvent {
         BridgeEvent {
-            sequence: 1,
+            cursor: "cursor-1".into(),
             event_id: "event-1".into(),
-            occurred_at: "2026-08-22T15:00:00Z".into(),
+            occurred_at_ms: 1_776_527_200_000,
             kind: BridgeEventKind::MessageCreated {
                 message: IMessage {
                     id: "msg-1".into(),
                     conversation_id: "chat-1".into(),
                     sender: "+15551234567".into(),
-                    sent_at: "2026-08-22T15:00:00Z".into(),
+                    sent_at_ms: 1_776_527_200_000,
                     text: "Train at 12:48".into(),
                     attachments: Vec::new(),
                 },
@@ -482,27 +492,27 @@ mod tests {
     #[test]
     fn backfill_and_read_receipt_define_the_bridge_contract() {
         let mut http = MockHttp::new();
-        http.expect_json(HttpRequest::get("/bridge/v1/info"), 200, info())
+        http.expect_json(HttpRequest::get("/v1/bridge"), 200, info())
             .expect("info");
         http.expect_json(
-            HttpRequest::get("/bridge/v1/events")
-                .query("after", "0")
+            HttpRequest::get("/v1/events")
+                .query("after", "origin")
                 .query("limit", "500"),
             200,
             BridgeEventPage {
                 events: vec![event()],
-                next_sequence: 1,
+                next_cursor: "cursor-1".into(),
                 has_more: false,
             },
         )
         .expect("events");
         let idempotency = digest("test", b"receipt");
         http.expect_json(
-            HttpRequest::post_json(
-                "/bridge/v1/conversations/chat-1/read-receipts",
+            HttpRequest::put_json(
+                format!("/v1/read-receipts/{}", hex(&idempotency.0)),
                 ReadReceiptRequest {
+                    conversation_id: "chat-1",
                     through_message_id: "msg-1",
-                    idempotency_key: hex(&idempotency.0),
                 },
             )
             .expect("request"),
@@ -510,14 +520,15 @@ mod tests {
             ReadReceiptResponse {
                 receipt_id: "receipt-1".into(),
                 status: ReceiptStatus::Applied,
-                applied_at: "2026-08-22T15:01:00Z".into(),
+                applied_at_ms: 1_776_527_260_000,
             },
         )
         .expect("receipt");
         let mut connector = IMessageConnector::new(http);
         let batch = connector.pull(None).expect("pull");
         assert_eq!(batch.observations.len(), 1);
-        assert_eq!(batch.next_cursor.sequence, 1);
+        assert_eq!(batch.next_cursor.after, "cursor-1");
+        assert_eq!(batch.next_cursor.store_id, "store-1");
         let request = EffectRequest {
             idempotency,
             verb: EffectVerb::SendReadReceipt,

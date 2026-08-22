@@ -52,7 +52,15 @@ pub struct SlackEventPayload {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SlackMessageEvent {
+#[serde(untagged)]
+pub enum SlackMessageEvent {
+    Changed(SlackChangedEvent),
+    Deleted(SlackDeletedEvent),
+    Posted(SlackPostedEvent),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SlackPostedEvent {
     #[serde(rename = "type")]
     pub event_type: String,
     pub channel: String,
@@ -62,7 +70,102 @@ pub struct SlackMessageEvent {
     #[serde(default)]
     pub thread_ts: String,
     #[serde(default)]
+    pub event_ts: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SlackChangedEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
     pub subtype: String,
+    pub channel: String,
+    pub ts: String,
+    pub message: SlackChangedMessage,
+    #[serde(default)]
+    pub event_ts: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SlackChangedMessage {
+    pub user: String,
+    pub text: String,
+    pub ts: String,
+    #[serde(default)]
+    pub thread_ts: String,
+    pub edited: SlackEdited,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SlackEdited {
+    pub user: String,
+    pub ts: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SlackDeletedEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    pub subtype: String,
+    pub channel: String,
+    pub deleted_ts: String,
+    pub ts: String,
+    #[serde(default)]
+    pub event_ts: String,
+}
+
+impl SlackMessageEvent {
+    fn channel(&self) -> &str {
+        match self {
+            Self::Posted(event) => &event.channel,
+            Self::Changed(event) => &event.channel,
+            Self::Deleted(event) => &event.channel,
+        }
+    }
+
+    fn object_timestamp(&self) -> &str {
+        match self {
+            Self::Posted(event) => &event.ts,
+            Self::Changed(event) => &event.message.ts,
+            Self::Deleted(event) => &event.deleted_ts,
+        }
+    }
+
+    fn thread_timestamp(&self) -> &str {
+        match self {
+            Self::Posted(event) => nonempty_or(&event.thread_ts, &event.ts),
+            Self::Changed(event) => nonempty_or(&event.message.thread_ts, &event.message.ts),
+            Self::Deleted(event) => &event.deleted_ts,
+        }
+    }
+
+    fn event_timestamp(&self) -> &str {
+        match self {
+            Self::Posted(event) => nonempty_or(&event.event_ts, &event.ts),
+            Self::Changed(event) => nonempty_or(&event.event_ts, &event.ts),
+            Self::Deleted(event) => nonempty_or(&event.event_ts, &event.ts),
+        }
+    }
+
+    fn kind(&self) -> ObservationKind {
+        match self {
+            Self::Posted(event) if event.text.contains("<@") => ObservationKind::Mentioned,
+            Self::Posted(_) => ObservationKind::Created,
+            Self::Changed(_) => ObservationKind::Updated,
+            Self::Deleted(_) => ObservationKind::Deleted,
+        }
+    }
+
+    fn semantic_revision(&self) -> &str {
+        match self {
+            Self::Posted(event) => &event.ts,
+            Self::Changed(event) => &event.message.edited.ts,
+            Self::Deleted(event) => self.event_timestamp(),
+        }
+    }
+}
+
+fn nonempty_or<'a>(value: &'a str, fallback: &'a str) -> &'a str {
+    if value.is_empty() { fallback } else { value }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,41 +205,42 @@ pub struct SlackEvent {
 
 impl From<SlackEvent> for NormalizedObservation {
     fn from(event: SlackEvent) -> Self {
-        let thread = if event.message.thread_ts.is_empty() {
-            event.message.ts.as_str()
-        } else {
-            event.message.thread_ts.as_str()
-        };
-        let payload = serde_json::to_vec(&event.message).expect("SlackMessageEvent is JSON-safe");
-        let occurred_at = slack_millis(&event.message.ts);
-        let kind = match event.message.subtype.as_str() {
-            "message_deleted" => ObservationKind::Deleted,
-            "message_changed" => ObservationKind::Updated,
-            _ if event.message.text.contains("<@") => ObservationKind::Mentioned,
-            _ => ObservationKind::Created,
-        };
+        let payload =
+            serde_json::to_vec(&(&event.message, &event.event_id)).expect("Slack event is JSON-safe");
+        let channel = event.message.channel();
+        let object_timestamp = event.message.object_timestamp();
+        let thread = event.message.thread_timestamp();
+        let revision = event.message.semantic_revision();
         Self {
             account: digest("slack-team", event.team_id.as_bytes()),
             object: digest_parts(
                 "slack-message",
                 &[
                     event.team_id.as_bytes(),
-                    event.message.channel.as_bytes(),
-                    event.message.ts.as_bytes(),
+                    channel.as_bytes(),
+                    object_timestamp.as_bytes(),
                 ],
             ),
             thread: digest_parts(
                 "slack-thread",
                 &[
                     event.team_id.as_bytes(),
-                    event.message.channel.as_bytes(),
+                    channel.as_bytes(),
                     thread.as_bytes(),
                 ],
             ),
-            event: digest("slack-event", event.event_id.as_bytes()),
+            event: digest_parts(
+                "slack-event",
+                &[
+                    event.team_id.as_bytes(),
+                    channel.as_bytes(),
+                    object_timestamp.as_bytes(),
+                    revision.as_bytes(),
+                ],
+            ),
             payload: digest("slack-payload", payload),
-            kind,
-            occurred_at,
+            kind: event.message.kind(),
+            occurred_at: slack_millis(event.message.event_timestamp()),
         }
     }
 }
@@ -245,16 +349,22 @@ where
         let mut seen_messages = HashSet::new();
         while let Some(envelope) = self.socket.pop_front() {
             let event = envelope.payload;
-            let key = (event.event.channel.clone(), event.event.ts.clone());
+            let channel = event.event.channel().to_owned();
+            let highwater = event.event.event_timestamp().to_owned();
+            let key = (
+                channel.clone(),
+                event.event.object_timestamp().to_owned(),
+                event.event.semantic_revision().to_owned(),
+            );
             if seen_messages.insert(key) {
                 watermarks
-                    .entry(event.event.channel.clone())
+                    .entry(channel)
                     .and_modify(|timestamp| {
-                        if event.event.ts > *timestamp {
-                            timestamp.clone_from(&event.event.ts);
+                        if highwater > *timestamp {
+                            timestamp.clone_from(&highwater);
                         }
                     })
-                    .or_insert_with(|| event.event.ts.clone());
+                    .or_insert(highwater);
                 observations.push(SlackEvent {
                     event_id: event.event_id,
                     team_id: event.team_id,
@@ -291,7 +401,11 @@ where
                     });
                 }
                 for message in response.messages {
-                    let key = (channel.to_string(), message.ts.clone());
+                    let key = (
+                        channel.to_string(),
+                        message.ts.clone(),
+                        message.ts.clone(),
+                    );
                     if seen_messages.insert(key) {
                         let event_id = format!("history:{}:{}", channel, message.ts);
                         watermarks
@@ -305,15 +419,15 @@ where
                         observations.push(SlackEvent {
                             event_id,
                             team_id: self.team_id.to_string(),
-                            message: SlackMessageEvent {
+                            message: SlackMessageEvent::Posted(SlackPostedEvent {
                                 event_type: message.message_type,
                                 channel: channel.to_string(),
                                 user: message.user,
                                 text: message.text,
                                 ts: message.ts,
                                 thread_ts: message.thread_ts,
-                                subtype: message.subtype,
-                            },
+                                event_ts: String::new(),
+                            }),
                         });
                     }
                 }
@@ -352,15 +466,15 @@ mod tests {
             payload: SlackEventPayload {
                 event_id: "Ev-1".into(),
                 team_id: "T1".into(),
-                event: SlackMessageEvent {
+                event: SlackMessageEvent::Posted(SlackPostedEvent {
                     event_type: "message".into(),
                     channel: "C1".into(),
                     user: "U1".into(),
                     text: "hello".into(),
                     ts: "1700000000.000100".into(),
                     thread_ts: String::new(),
-                    subtype: String::new(),
-                },
+                    event_ts: "1700000000.000100".into(),
+                }),
             },
         };
         let mut http = MockHttp::new();
