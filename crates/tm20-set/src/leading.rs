@@ -28,6 +28,11 @@ impl GridSkip {
         units: std::num::NonZeroU8::new(1).unwrap(),
     };
 
+    /// Two modules. Three-column gutter.
+    pub const TWO: Self = Self {
+        units: std::num::NonZeroU8::new(2).unwrap(),
+    };
+
     pub fn n(units: u8) -> Option<Self> {
         std::num::NonZeroU8::new(units).map(|units| Self { units })
     }
@@ -63,6 +68,7 @@ mod tests {
     #[test]
     fn skip_modules_on_grid() {
         assert_eq!(GridSkip::ONE.dots() % GRID, 0);
+        assert_eq!(GridSkip::TWO.dots(), 2 * GRID);
         assert_eq!(GridSkip::n(2).unwrap().dots() % GRID, 0);
         assert_eq!(TASK_BOX % GRID, 0);
         assert_eq!(NOTE_RULE % GRID, 0);

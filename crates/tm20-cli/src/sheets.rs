@@ -83,9 +83,7 @@ fn ticket() -> Result<Document> {
             align: MarkAlign::Start,
             tracking: Tracking(0),
         }),
-        Frame::Rule(Rule {
-            thickness: Thickness::Two,
-        }),
+        Frame::Rule(Rule::tape(Thickness::Two)),
         Frame::Text(TextBlock {
             size: body,
             spans: vec![
@@ -99,9 +97,7 @@ fn ticket() -> Result<Document> {
         }),
         Frame::Cols(cols(Cut::Roman, "Espresso", "$4.50")),
         Frame::Cols(cols(Cut::Roman, "Filter coffee", "$3.00")),
-        Frame::Rule(Rule {
-            thickness: Thickness::One,
-        }),
+        Frame::Rule(Rule::tape(Thickness::One)),
         Frame::Cols(cols(Cut::Bold, "Total", "$7.50")),
     ];
     Ok(tm20_set::lower(&Sheet::tape(frames), &faces)?)
@@ -161,18 +157,14 @@ fn prose() -> Result<Document> {
                 li(Cut::Roman, body, "A rule is a section, or it is nothing."),
             ],
         }),
-        Frame::Rule(Rule {
-            thickness: Thickness::Two,
-        }),
+        Frame::Rule(Rule::tape(Thickness::Two)),
         Frame::Head(Head {
             size: body,
             text: "Receipt".into(),
         }),
         Frame::Cols(cols(Cut::Roman, "Espresso", "$4.50")),
         Frame::Cols(cols(Cut::Roman, "Filter coffee", "$3.00")),
-        Frame::Rule(Rule {
-            thickness: Thickness::One,
-        }),
+        Frame::Rule(Rule::tape(Thickness::One)),
         Frame::Cols(cols(Cut::Bold, "Total", "$7.50")),
     ];
     Ok(tm20_set::lower(&Sheet::tape(frames), &faces)?)
@@ -198,9 +190,7 @@ fn helvetica() -> Result<Document> {
         }));
     }
     frames.extend([
-        Frame::Rule(Rule {
-            thickness: Thickness::Two,
-        }),
+        Frame::Rule(Rule::tape(Thickness::Two)),
         Frame::Text(TextBlock {
             size: body,
             spans: vec![

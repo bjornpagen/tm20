@@ -12,7 +12,7 @@ use harfrust::font::FontFuncs;
 use harfrust::{Feature, FontRef, GlyphId, ShapeOptions, ShaperData, Tag, UnicodeBuffer};
 
 use crate::error::Error;
-use crate::size::{DisplaySize, FRAC, TextSize};
+use crate::size::{DisplaySize, TextSize, FRAC};
 use crate::strike::{self, Strike};
 
 /// Named voice. The sheet writes these; [`FaceTable`] says what they are.
@@ -92,6 +92,7 @@ pub struct Face {
     buf: RefCell<Option<UnicodeBuffer>>,
     upem: u16,
     ascent: i16,
+    italic_tan: f32,
     strikes: RefCell<HashMap<(u16, u16), Strike>>,
 }
 
@@ -110,6 +111,18 @@ enum ShapeKind {
 
 fn scale(ppem: u16) -> i32 {
     i32::from(ppem) * FRAC
+}
+
+fn italic_tan(font: &FontRef<'_>) -> f32 {
+    let Some(post) = font.table_data(Tag::new(b"post")) else {
+        return 0.0;
+    };
+    let bytes = post.as_bytes();
+    let Ok(raw) = bytes.get(4..8).unwrap_or(&[]).try_into() else {
+        return 0.0;
+    };
+    let degrees = i32::from_be_bytes(raw) as f32 / 65536.0;
+    degrees.to_radians().tan().abs()
 }
 
 fn parse_postscript_name(name: &[u8]) -> Option<String> {
@@ -218,6 +231,7 @@ impl Face {
             .ascent
             .round() as i16;
         let hb = ShaperData::new(&font);
+        let italic_tan = italic_tan(&font);
         Ok(Self {
             bytes,
             index,
@@ -226,8 +240,13 @@ impl Face {
             buf: RefCell::new(Some(UnicodeBuffer::new())),
             upem,
             ascent,
+            italic_tan,
             strikes: RefCell::new(HashMap::new()),
         })
+    }
+
+    pub(crate) fn italic_tan(&self) -> f32 {
+        self.italic_tan
     }
 
     pub fn text(self) -> TextFace {

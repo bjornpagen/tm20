@@ -13,6 +13,7 @@ pub fn inline(latex: &str, size: TextSize, measure: u16) -> Result<Math, Error> 
     raster(latex, MathStyle::Text, size, measure)
 }
 
+/// One TeX box. Wider than the measure shrinks; there is no atom list to wrap.
 pub fn display(latex: &str, size: TextSize, measure: u16) -> Result<Math, Error> {
     raster(latex, MathStyle::Display, size, measure)
 }
@@ -34,5 +35,6 @@ fn raster(latex: &str, style: MathStyle, size: TextSize, measure: u16) -> Result
     )
     .map_err(|_| Error::Math)?;
     let ascent = (lbox.height as f32 * font_size).round().max(0.0) as u16;
-    Math::from_png(&png, measure, ascent).map_err(|_| Error::Math)
+    let depth = (lbox.depth as f32 * font_size).round().max(0.0) as u16;
+    Math::from_png(&png, measure, ascent, depth).map_err(|_| Error::Math)
 }

@@ -1,8 +1,10 @@
 //! Compact vs Hang. Paint walks boxes; leftover is not re-derived.
+//! Adjacent [`ColAlign::End`] columns take a two-module gap; a single-module
+//! gutter between two hanging figure columns is not a legal plan.
 
 use crate::error::Error;
 use crate::frame::ColAlign;
-use crate::leading::GRID;
+use crate::leading::{GridSkip, GRID};
 
 /// Unwrapped (`pref`) and longest-word (`min`) widths, with ink alignment.
 #[derive(Clone, Copy)]
@@ -104,9 +106,24 @@ fn room(pref_sum: u16, min_sum: u16, inner: u16) -> Room {
     }
 }
 
-fn inner_width(measure: u16, gutter: u16, n: usize) -> u16 {
-    let gutters = gutter.saturating_mul(n.saturating_sub(1) as u16);
-    measure.saturating_sub(gutters).max(1)
+fn gap_after<const N: usize>(align: &[ColAlign; N], i: usize, base: u16) -> u16 {
+    if i + 1 >= N {
+        return 0;
+    }
+    match (align[i], align[i + 1]) {
+        (ColAlign::End, ColAlign::End) => base.max(GridSkip::TWO.dots()),
+        _ => base,
+    }
+}
+
+fn gutters<const N: usize>(align: &[ColAlign; N], base: u16) -> u16 {
+    (0..N.saturating_sub(1))
+        .map(|i| gap_after(align, i, base))
+        .fold(0u16, u16::saturating_add)
+}
+
+fn inner_width<const N: usize>(measure: u16, align: &[ColAlign; N], gutter: u16) -> u16 {
+    measure.saturating_sub(gutters(align, gutter)).max(1)
 }
 
 fn sum(xs: impl Iterator<Item = u16>) -> u16 {
@@ -159,9 +176,7 @@ fn pack<const N: usize>(
                 align: align[i],
             };
             origin = origin.saturating_add(widths[i]);
-            if i + 1 < N {
-                origin = origin.saturating_add(gutter);
-            }
+            origin = origin.saturating_add(gap_after(&align, i, gutter));
             cell
         }),
     }
@@ -173,8 +188,7 @@ impl<const N: usize> Placed<N> {
     }
 
     fn hang(widths: [u16; N], align: [ColAlign; N], x0: u16, measure: u16, gutter: u16) -> Self {
-        let gutters = gutter.saturating_mul(N.saturating_sub(1) as u16);
-        let used = sum(widths.iter().copied()).saturating_add(gutters);
+        let used = sum(widths.iter().copied()).saturating_add(gutters(&align, gutter));
         let slack = measure.saturating_sub(used);
         let placed = pack(x0.saturating_add(slack), widths, align, gutter);
         if used <= measure {
@@ -207,7 +221,7 @@ pub(crate) fn layout<const N: usize>(
     cost: impl FnMut(&[u16; N]) -> Result<f64, Error>,
 ) -> Result<Placed<N>, Error> {
     debug_assert!(N >= 2);
-    let inner = inner_width(measure, gutter, N);
+    let inner = inner_width(measure, &natural.align, gutter);
     let pref = natural.pref.map(|w| w.min(inner).max(1));
     let min: [u16; N] = std::array::from_fn(|i| natural.min[i].min(pref[i]).max(1));
     let spec: [Width; N] = std::array::from_fn(|i| Width::new(natural.align[i], min[i], pref[i]));
@@ -465,7 +479,23 @@ mod tests {
         assert_eq!(p.col[0].width, 10);
         assert_eq!(p.col[1].width, 20);
         assert_eq!(p.col[1].end(), 100);
-        assert_eq!(p.col[0].origin, 100 - 20 - GRID - 10);
+        assert_eq!(p.col[0].origin, 100 - 20 - GridSkip::TWO.dots() - 10);
+        assert_eq!(p.col[1].origin - p.col[0].end(), GridSkip::TWO.dots());
+    }
+
+    #[test]
+    fn adjacent_end_cannot_share_a_single_module() {
+        let p = place_fit(
+            [ColAlign::Start, ColAlign::End, ColAlign::End],
+            [40, 10, 20],
+            0,
+            200,
+            GRID,
+        );
+        assert_eq!(p.col[1].origin - p.col[0].end(), GRID);
+        assert_eq!(p.col[2].origin - p.col[1].end(), GridSkip::TWO.dots());
+        assert_eq!(p.col[2].end(), 200);
+        assert!(p.col.windows(2).all(|w| w[0].end() <= w[1].origin));
     }
 
     #[test]

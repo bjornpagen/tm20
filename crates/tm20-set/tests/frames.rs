@@ -58,9 +58,7 @@ fn kinds() -> Vec<Frame<'static>> {
         }),
         Frame::Figure(Figure::from_bits(8, 8, &[true; 64]).unwrap()),
         Frame::Math(Math::from_bits(8, 8, &[true; 64], 6).unwrap()),
-        Frame::Rule(Rule {
-            thickness: Thickness::Two,
-        }),
+        Frame::Rule(Rule::tape(Thickness::Two)),
     ]
 }
 

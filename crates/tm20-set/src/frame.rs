@@ -6,7 +6,7 @@ use std::num::NonZeroU32;
 
 use crate::error::Error;
 use crate::face::{Cut, FaceTable};
-use crate::leading::{GRID, GridSkip, TASK_BOX};
+use crate::leading::{GridSkip, GRID, TASK_BOX};
 use crate::size::{DisplaySize, TextSize};
 use tm20::PRINTABLE_DOTS;
 
@@ -122,8 +122,25 @@ pub struct Mark<'a> {
     pub tracking: Tracking,
 }
 
+/// Where a rule sits. Only the tape: a hung walk cannot name leftover dots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleSpan {
+    Tape,
+}
+
+/// A break. The span is the tape, not leftover measure after a hang.
 pub struct Rule {
     pub thickness: Thickness,
+    pub span: RuleSpan,
+}
+
+impl Rule {
+    pub fn tape(thickness: Thickness) -> Self {
+        Self {
+            thickness,
+            span: RuleSpan::Tape,
+        }
+    }
 }
 
 /// Ink in the cell. Last [`End`] hangs the table on the tape; all-Start is compact.
@@ -200,25 +217,53 @@ pub enum ItemMark {
     Task { checked: bool },
 }
 
+/// Body of one item. An empty `Vec<Frame>` is not an item: it is [`Blank`].
+pub enum ItemBody<'a> {
+    /// One empty InkLine at the list face. The mark sits on this slug.
+    Blank,
+    Frames(Vec<Frame<'a>>),
+}
+
+impl<'a> ItemBody<'a> {
+    pub fn from_frames(frames: Vec<Frame<'a>>) -> Self {
+        if frames.is_empty() {
+            Self::Blank
+        } else {
+            Self::Frames(frames)
+        }
+    }
+
+    pub fn frames(&self) -> &[Frame<'a>] {
+        match self {
+            Self::Blank => &[],
+            Self::Frames(frames) => frames,
+        }
+    }
+}
+
 /// One list item. A task replaces the dash or decimal with a drawn checkbox.
 pub struct ListItem<'a> {
     pub mark: ItemMark,
-    pub frames: Vec<Frame<'a>>,
+    pub body: ItemBody<'a>,
 }
 
 impl<'a> ListItem<'a> {
     pub fn new(frames: Vec<Frame<'a>>) -> Self {
         Self {
             mark: ItemMark::List,
-            frames,
+            body: ItemBody::from_frames(frames),
         }
     }
 
     pub fn task(checked: bool, frames: Vec<Frame<'a>>) -> Self {
         Self {
             mark: ItemMark::Task { checked },
-            frames,
+            body: ItemBody::from_frames(frames),
         }
+    }
+
+    pub fn frames(&self) -> &[Frame<'a>] {
+        self.body.frames()
     }
 }
 
@@ -279,9 +324,33 @@ pub struct Quote<'a> {
 }
 
 /// Preformatted lines, hung by [`GRID`]. Not a paragraph: spaces do not wrap.
+/// Tabs are column advances (every 8), parsed out so Menlo never sees U+0009.
 pub struct Code<'a> {
     pub size: TextSize,
     pub lines: Vec<Cow<'a, str>>,
+}
+
+const TAB_STOP: usize = 8;
+
+/// Expand U+0009 to the next multiple of [`TAB_STOP`] columns. A code line
+/// that still contains a tab is a parse miss.
+pub fn detab(s: &str) -> Cow<'_, str> {
+    if !s.contains('\t') {
+        return Cow::Borrowed(s);
+    }
+    let mut col = 0usize;
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c == '\t' {
+            let n = TAB_STOP - (col % TAB_STOP);
+            out.extend(std::iter::repeat_n(' ', n));
+            col += n;
+        } else {
+            out.push(c);
+            col = if c == '\n' { 0 } else { col + 1 };
+        }
+    }
+    Cow::Owned(out)
 }
 
 fn bitmap(width: u16, height: u16, bits: &[bool]) -> Result<(u16, u16, Vec<u8>), Error> {
@@ -334,7 +403,9 @@ impl Figure {
 }
 
 /// TeX box. Natural size; shrinks if wider than the measure; never scales up.
-/// `ascent` is dots from the top of the bits to the baseline.
+/// One token: there is no math-atom list to wrap.
+/// `ascent` / `depth` are the TeX box (dots). A line’s slug reads these, not a
+/// constant Plus2. `height` is the PNG; it may be smaller than ascent+depth.
 /// `bits` is the protocol table: packed MSB-first, 1 is black.
 #[derive(Clone)]
 pub struct Math {
@@ -342,42 +413,64 @@ pub struct Math {
     pub height: u16,
     pub bits: Vec<u8>,
     pub ascent: u16,
+    pub depth: u16,
 }
 
 impl Math {
     pub fn from_bits(width: u16, height: u16, bits: &[bool], ascent: u16) -> Result<Self, Error> {
         let (width, height, bits) = bitmap(width, height, bits)?;
+        let ascent = ascent.min(height);
         Ok(Self {
             width,
             height,
             bits,
-            ascent: ascent.min(height),
+            ascent,
+            depth: height.saturating_sub(ascent),
         })
     }
 
     /// Decode PNG at native size. Shrink if wider than `max_w`; never scale up.
-    pub fn from_png(bytes: &[u8], max_w: u16, ascent: u16) -> Result<Self, Error> {
+    /// `ascent` and `depth` are the TeX box in source pixels; both scale if the PNG shrinks.
+    pub fn from_png(bytes: &[u8], max_w: u16, ascent: u16, depth: u16) -> Result<Self, Error> {
         let luma = decode_luma(bytes)?;
         let src_w = luma.width();
         let (dst_w, dst_h, samples) = fit_luma(&luma, max_w)?;
         let scale = dst_w as f32 / src_w as f32;
         let ascent = ((ascent as f32 * scale).round() as u16).min(dst_h as u16);
+        let png_depth = (dst_h as u16).saturating_sub(ascent);
+        let depth = ((depth as f32 * scale).round() as u16).max(png_depth);
         Ok(Self {
             width: dst_w as u16,
             height: dst_h as u16,
             bits: floyd_steinberg(dst_w, dst_h, samples),
             ascent,
+            depth,
         })
     }
 }
 
+/// Luma on paper. Alpha is applied here: transparent is paper (255), not
+/// dropped RGB. A figure cannot represent “RGB without alpha interpretation.”
 fn decode_luma(bytes: &[u8]) -> Result<image::GrayImage, Error> {
     let img = image::load_from_memory(bytes).map_err(|_| Error::Image)?;
-    let luma = img.to_luma8();
+    let luma = paper_gray(&img);
     if luma.width() == 0 || luma.height() == 0 {
         return Err(Error::Image);
     }
     Ok(luma)
+}
+
+fn paper_gray(img: &image::DynamicImage) -> image::GrayImage {
+    let rgba = img.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    image::GrayImage::from_fn(width, height, |x, y| {
+        let pixel = rgba.get_pixel(x, y).0;
+        let ink =
+            (u32::from(pixel[0]) * 77 + u32::from(pixel[1]) * 150 + u32::from(pixel[2]) * 29) >> 8;
+        let paper = 255u32;
+        let out = (ink * u32::from(pixel[3]) + paper * (255 - u32::from(pixel[3]))) / 255;
+        image::Luma([out as u8])
+    })
 }
 
 /// Native size if it already fits `max_w`. Otherwise shrink. Never scale up.
@@ -492,6 +585,13 @@ mod tests {
     }
 
     #[test]
+    fn empty_item_frames_are_blank() {
+        assert!(matches!(ItemBody::from_frames(vec![]), ItemBody::Blank));
+        assert!(matches!(ListItem::new(vec![]).body, ItemBody::Blank));
+        assert_eq!(Rule::tape(Thickness::Two).span, RuleSpan::Tape);
+    }
+
+    #[test]
     fn figure_rejects_ragged_bits() {
         assert!(matches!(
             Figure::from_bits(2, 2, &[true]),
@@ -543,17 +643,55 @@ mod tests {
         ));
     }
 
+    fn rgba_png(pixels: &[[u8; 4]]) -> Vec<u8> {
+        let n = pixels.len() as u32;
+        let side = (n as f32).sqrt() as u32;
+        let img = image::RgbaImage::from_fn(side, side, |x, y| {
+            image::Rgba(pixels[(y * side + x) as usize])
+        });
+        let mut buf = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+            .unwrap();
+        buf
+    }
+
+    #[test]
+    fn figure_treats_transparent_as_paper() {
+        // Black opaque + fully transparent: to_luma8 would make a black square.
+        let buf = rgba_png(&[[0, 0, 0, 0], [0, 0, 0, 255], [0, 0, 0, 0], [0, 0, 0, 255]]);
+        let fig = Figure::from_image(&buf, 16).unwrap();
+        assert_eq!(fig.width, 2);
+        assert_eq!(fig.height, 2);
+        let stride = tm20::graphics::width_bytes(2);
+        assert!(
+            !tm20::graphics::is_black(&fig.bits, stride, 0, 0),
+            "transparent is paper"
+        );
+        assert!(
+            tm20::graphics::is_black(&fig.bits, stride, 1, 0),
+            "opaque black is ink"
+        );
+    }
+
+    #[test]
+    fn detab_advances_to_column_eight() {
+        assert_eq!(detab("col\tumn"), "col     umn");
+        assert_eq!(detab("\tx"), "        x");
+        assert_eq!(detab("no tabs"), "no tabs");
+    }
+
     #[test]
     fn math_from_png_does_not_scale_up() {
         let img = image::GrayImage::from_pixel(4, 2, image::Luma([0]));
         let mut buf = Vec::new();
         img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
             .unwrap();
-        let m = Math::from_png(&buf, 16, 2).unwrap();
+        let m = Math::from_png(&buf, 16, 2, 0).unwrap();
         assert_eq!(m.width, 4);
         assert_eq!(m.height, 2);
         assert_eq!(m.ascent, 2);
-        let shrink = Math::from_png(&buf, 2, 2).unwrap();
+        assert_eq!(m.depth, 0);
+        let shrink = Math::from_png(&buf, 2, 2, 0).unwrap();
         assert_eq!(shrink.width, 2);
         assert!(shrink.height >= 1);
         assert!(shrink.ascent <= shrink.height);

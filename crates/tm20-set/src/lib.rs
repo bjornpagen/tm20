@@ -18,9 +18,9 @@ pub use compose::compose;
 pub use error::Error;
 pub use face::{Cut, DisplayFace, Face, FaceTable, TextFace};
 pub use frame::{
-    Code, ColAlign, ColBody, Cols, DecimalDelim, EN_DASH, Figure, Frame, Head, ItemMark, List,
-    ListFit, ListItem, Mark, MarkAlign, Marker, Math, Measure, Note, Quote, Rule, Sheet, Span,
-    TextBlock, Thickness, Tracking,
+    Code, ColAlign, ColBody, Cols, DecimalDelim, EN_DASH, Figure, Frame, Head, ItemBody, ItemMark,
+    List, ListFit, ListItem, Mark, MarkAlign, Marker, Math, Measure, Note, Quote, Rule, RuleSpan,
+    Sheet, Span, TextBlock, Thickness, Tracking, detab,
 };
 pub use leading::{GRID, GridSkip, HANG, Leading, NOTE_RULE, TASK_BOX, pt_dots};
 pub use lower::lower;

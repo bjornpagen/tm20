@@ -2,10 +2,10 @@
 
 use std::path::Path;
 
-use tm20_md::{Error, image_bytes, sheet};
+use tm20_md::{image_bytes, sheet, Error};
 use tm20_set::{
-    ColAlign, ColBody, Cut, DecimalDelim, Frame, ItemMark, ListFit, Marker, Measure, Note, Span,
-    TextSize, Thickness,
+    ColAlign, ColBody, Cut, DecimalDelim, Frame, ItemBody, ItemMark, ListFit, Marker, Measure, Note,
+    RuleSpan, Span, TextSize, Thickness,
 };
 
 fn parse(md: &str) -> tm20_set::Sheet<'static> {
@@ -70,7 +70,7 @@ fn thematic_break() {
     let s = parse("Hello\n\n---\n\nThere");
     assert!(matches!(
         s.frames[1],
-        Frame::Rule(ref r) if r.thickness == Thickness::Two
+        Frame::Rule(ref r) if r.thickness == Thickness::Two && r.span == RuleSpan::Tape
     ));
 }
 
@@ -240,16 +240,28 @@ fn a_paragraph_breaks_lists() {
 }
 
 #[test]
+fn empty_list_item_is_a_blank_line() {
+    let s = parse("- full\n-\n- also full\n");
+    match &s.frames[0] {
+        Frame::List(l) => {
+            assert_eq!(l.items.len(), 3);
+            assert!(matches!(l.items[1].body, ItemBody::Blank));
+            assert!(matches!(l.items[0].body, ItemBody::Frames(_)));
+            assert!(matches!(l.items[2].body, ItemBody::Frames(_)));
+        }
+        _ => panic!("list"),
+    }
+}
+
+#[test]
 fn nested_list_item_blocks() {
     let s = parse("- outer\n  - inner");
     match &s.frames[0] {
         Frame::List(l) => {
-            assert!(
-                l.items[0]
-                    .frames
-                    .iter()
-                    .any(|f| matches!(f, Frame::List(_)))
-            );
+            assert!(l.items[0]
+                .frames()
+                .iter()
+                .any(|f| matches!(f, Frame::List(_))));
         }
         _ => panic!("list"),
     }
@@ -265,15 +277,13 @@ fn list_nest_cap() {
 fn emphasis_and_strong() {
     let s = parse("a *i* and **b** and ***both***");
     let runs = text_runs(&s);
-    assert!(
-        runs.iter()
-            .any(|(c, t)| *c == Cut::Italic && t.contains('i'))
-    );
+    assert!(runs
+        .iter()
+        .any(|(c, t)| *c == Cut::Italic && t.contains('i')));
     assert!(runs.iter().any(|(c, t)| *c == Cut::Bold && t.contains('b')));
-    assert!(
-        runs.iter()
-            .any(|(c, t)| *c == Cut::BoldItalic && t.contains("both"))
-    );
+    assert!(runs
+        .iter()
+        .any(|(c, t)| *c == Cut::BoldItalic && t.contains("both")));
 }
 
 #[test]
@@ -417,6 +427,78 @@ fn mixed_text_and_image_is_an_error() {
 }
 
 #[test]
+fn ellipsis_is_one_glyph() {
+    let s = parse("wait...");
+    assert_eq!(text_runs(&s), vec![(Cut::Roman, "wait…".into())]);
+    let code = parse("see `...` done");
+    assert_eq!(
+        text_runs(&code),
+        vec![
+            (Cut::Roman, "see ".into()),
+            (Cut::Mono, "...".into()),
+            (Cut::Roman, " done".into()),
+        ]
+    );
+}
+
+#[test]
+fn empty_atx_heading_is_not_a_frame() {
+    let s = parse("#\n\n# Title");
+    assert_eq!(s.frames.len(), 1);
+    assert!(matches!(&s.frames[0], Frame::Mark(m) if m.text == "Title"));
+}
+
+#[test]
+fn fence_tab_is_a_column_advance() {
+    let s = parse("```\ncol\tumn\n```");
+    match &s.frames[0] {
+        Frame::Code(c) => {
+            assert_eq!(c.lines[0].as_ref(), "col     umn");
+            assert!(!c.lines[0].contains('\t'));
+        }
+        _ => panic!("code"),
+    }
+}
+
+#[test]
+fn footnote_in_a_cell_still_gets_a_note() {
+    let s = parse("| a | b |\n| :--- | :--- |\n| cell[^c] | x |\n\n[^c]: From a cell.\n");
+    match &s.frames[0] {
+        Frame::Cols(c) => match &c.body {
+            ColBody::Two { rows, .. } => {
+                let notes: Vec<_> = rows[1][0].iter().filter_map(span_note).collect();
+                assert_eq!(
+                    notes,
+                    vec![1],
+                    "{:?}",
+                    rows[1][0].iter().map(span_text).collect::<Vec<_>>()
+                );
+            }
+            ColBody::Three { .. } => panic!("two"),
+        },
+        _ => panic!("cols"),
+    }
+    assert_eq!(s.notes.len(), 1);
+}
+
+#[test]
+fn pipe_inside_code_span_is_cell_content() {
+    let s = parse("| escaped | code |\n| :--- | :--- |\n| a \\| b | `a|b` |\n");
+    match &s.frames[0] {
+        Frame::Cols(c) => match &c.body {
+            ColBody::Two { rows, .. } => {
+                let start: String = rows[1][0].iter().map(span_text).collect();
+                let code: String = rows[1][1].iter().map(span_text).collect();
+                assert!(start.contains('|'), "{start}");
+                assert_eq!(code, "a|b", "{code:?}");
+            }
+            ColBody::Three { .. } => panic!("two"),
+        },
+        _ => panic!("cols"),
+    }
+}
+
+#[test]
 fn pipe_table() {
     let s = parse("| a | b |\n| :---: | ---: |\n| 1 | 2 |\n");
     match &s.frames[0] {
@@ -452,11 +534,10 @@ fn bare_autolink_is_italic_without_a_note() {
     match &s.frames[0] {
         Frame::Text(b) => {
             assert!(b.spans.iter().all(|sp| span_note(sp).is_none()));
-            assert!(
-                b.spans
-                    .iter()
-                    .any(|sp| span_cut(sp) == Cut::Italic && span_text(sp).contains("example.com"))
-            );
+            assert!(b
+                .spans
+                .iter()
+                .any(|sp| span_cut(sp) == Cut::Italic && span_text(sp).contains("example.com")));
         }
         _ => panic!("text"),
     }
@@ -483,7 +564,7 @@ fn nested_task_list() {
             assert_eq!(l.items[0].mark, ItemMark::Task { checked: true });
             assert_eq!(l.items[1].mark, ItemMark::Task { checked: false });
             let inner = l.items[0]
-                .frames
+                .frames()
                 .iter()
                 .find_map(|f| match f {
                     Frame::List(n) => Some(n),
@@ -537,6 +618,21 @@ fn undefined_footnote_stays_literal() {
     };
     assert!(t.contains("[^missing]"), "{t:?}");
     assert!(s.notes.is_empty());
+}
+
+#[test]
+fn inline_frac_box_has_tex_depth() {
+    let s = parse("tall \\(\\frac{a}{b}\\)");
+    match &s.frames[0] {
+        Frame::Text(b) => match b.spans.iter().find(|s| matches!(s, Span::Math(_))) {
+            Some(Span::Math(m)) => {
+                assert!(m.depth > 0, "frac depth is parsed, not leftover PNG");
+                assert!(m.ascent + m.depth >= 20, "TeX box is taller than a letter");
+            }
+            _ => panic!("frac"),
+        },
+        _ => panic!("text"),
+    }
 }
 
 #[test]

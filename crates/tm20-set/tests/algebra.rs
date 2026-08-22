@@ -6,7 +6,7 @@ use tm20::PRINTABLE_DOTS;
 use tm20::graphics::{Graphics, width_bytes};
 use tm20_set::{
     Code, ColAlign, Cols, Cut, DisplaySize, Figure, Frame, GRID, GridSkip, HANG, Head, List,
-    ListFit, ListItem, Mark, MarkAlign, NOTE_RULE, Note, Quote, Rule, Sheet, Span, TASK_BOX,
+    ListFit, ListItem, Mark, MarkAlign, Math, NOTE_RULE, Note, Quote, Rule, Sheet, Span, TASK_BOX,
     TextBlock, TextSize, Thickness, Tracking, compose, preview_png, pt_dots,
 };
 
@@ -402,9 +402,7 @@ fn rule_sits_below_the_line_slug() {
     let g = compose(
         &Sheet::tape(vec![
             text("H"),
-            Frame::Rule(Rule {
-                thickness: Thickness::One,
-            }),
+            Frame::Rule(Rule::tape(Thickness::One)),
         ]),
         &faces,
     )
@@ -435,7 +433,7 @@ fn rule_two_is_thicker_than_one() {
     let faces = common::table();
     let count = |t: Thickness| {
         let g = compose(
-            &Sheet::tape(vec![Frame::Rule(Rule { thickness: t })]),
+            &Sheet::tape(vec![Frame::Rule(Rule::tape(t))]),
             &faces,
         )
         .unwrap();
@@ -474,9 +472,7 @@ fn cols_hangs_from_rule() {
     let faces = common::table();
     let g = compose(
         &Sheet::tape(vec![
-            Frame::Rule(Rule {
-                thickness: Thickness::Two,
-            }),
+            Frame::Rule(Rule::tape(Thickness::Two)),
             Frame::Cols(common::cols(Cut::Roman, "H", "$1")),
         ]),
         &faces,
@@ -495,9 +491,7 @@ fn text_does_not_hang_from_a_section_rule() {
     let faces = common::table();
     let g = compose(
         &Sheet::tape(vec![
-            Frame::Rule(Rule {
-                thickness: Thickness::Two,
-            }),
+            Frame::Rule(Rule::tape(Thickness::Two)),
             text("H"),
         ]),
         &faces,
@@ -637,6 +631,37 @@ fn two_start(a: &'static str, b: &'static str) -> Frame<'static> {
             vec![Span::new(Cut::Roman, b)],
         ]],
     ))
+}
+
+#[test]
+fn adjacent_cuts_do_not_grow_a_word_space() {
+    let faces = common::table();
+    let g = compose(
+        &Sheet::tape(vec![Frame::Text(TextBlock {
+            size: TextSize::Pt11,
+            spans: vec![
+                Span::new(Cut::Roman, "mid"),
+                Span::new(Cut::Roman, "word"),
+            ],
+        })]),
+        &faces,
+    )
+    .unwrap();
+    let spaced = compose(
+        &Sheet::tape(vec![Frame::Text(TextBlock::plain(
+            Cut::Roman,
+            TextSize::Pt11,
+            "mid word",
+        ))]),
+        &faces,
+    )
+    .unwrap();
+    let (_, tight_r, ..) = ink_bbox(&g);
+    let (_, loose_r, ..) = ink_bbox(&spaced);
+    assert!(
+        tight_r + GRID < loose_r,
+        "Glue::None run ({tight_r}) must be shorter than a word-spaced run ({loose_r})"
+    );
 }
 
 #[test]
@@ -1176,6 +1201,130 @@ fn quote_then_code_share_a_slug() {
         "quote then code {} should share a slug, not a paragraph blank ({})",
         mixed.height_dots,
         paras.height_dots
+    );
+}
+
+#[test]
+fn rule_in_a_quote_is_the_tape() {
+    let faces = common::table();
+    let g = compose(
+        &Sheet::tape(vec![Frame::Quote(Quote {
+            frames: vec![Frame::Rule(Rule::tape(Thickness::Two))],
+        })]),
+        &faces,
+    )
+    .unwrap();
+    let rows = (0..g.height_dots as usize)
+        .filter(|&y| full_width_row(&g, y))
+        .count();
+    assert_eq!(rows, 2, "quote rule is tape-wide, not leftover hang");
+}
+
+#[test]
+fn sibling_lists_take_a_grid_seam() {
+    let faces = common::table();
+    let one = compose(
+        &Sheet::tape(vec![Frame::List(common::dash_list(vec![
+            common::item("H"),
+            common::item("H"),
+            common::item("H"),
+        ]))]),
+        &faces,
+    )
+    .unwrap();
+    let three = compose(
+        &Sheet::tape(vec![
+            Frame::List(common::dash_list(vec![common::item("H")])),
+            Frame::List(common::dash_list(vec![common::item("H")])),
+            Frame::List(common::dash_list(vec![common::item("H")])),
+        ]),
+        &faces,
+    )
+    .unwrap();
+    let extra = three.height_dots as i32 - one.height_dots as i32;
+    assert_eq!(
+        extra, 2 * GRID as i32,
+        "two new-list seams are 2×GRID ({} vs {})",
+        three.height_dots, one.height_dots
+    );
+}
+
+#[test]
+fn empty_item_occupies_a_body_slug() {
+    let faces = common::table();
+    let full = compose(
+        &Sheet::tape(vec![Frame::List(common::dash_list(vec![common::item("H")]))]),
+        &faces,
+    )
+    .unwrap();
+    let empty = compose(
+        &Sheet::tape(vec![Frame::List(common::dash_list(vec![ListItem::new(
+            vec![],
+        )]))]),
+        &faces,
+    )
+    .unwrap();
+    let delta = (empty.height_dots as i32 - full.height_dots as i32).abs();
+    assert!(
+        delta <= 4,
+        "blank item {} should share a body slug with a one-word item {}",
+        empty.height_dots,
+        full.height_dots
+    );
+    let mut mark = false;
+    for y in 0..empty.height_dots as usize {
+        for x in 0..24 {
+            mark |= packed_ink(&empty, y, x);
+        }
+    }
+    assert!(mark, "empty item still has a mark on the slug");
+}
+
+#[test]
+fn inline_math_slug_follows_the_ink() {
+    let faces = common::table();
+    let bits = vec![true; 8 * 60];
+    let tall = Math::from_bits(8, 60, &bits, 40).unwrap();
+    let short = Math::from_bits(8, 8, &bits[..64], 6).unwrap();
+    let with_frac = compose(
+        &Sheet::tape(vec![Frame::Text(TextBlock {
+            size: TextSize::Pt11,
+            spans: vec![Span::new(Cut::Roman, "x"), Span::math(tall)],
+        })]),
+        &faces,
+    )
+    .unwrap();
+    let with_short = compose(
+        &Sheet::tape(vec![Frame::Text(TextBlock {
+            size: TextSize::Pt11,
+            spans: vec![Span::new(Cut::Roman, "x"), Span::math(short)],
+        })]),
+        &faces,
+    )
+    .unwrap();
+    assert!(
+        with_frac.height_dots >= 60,
+        "tall inline math should grow the slug, got {}",
+        with_frac.height_dots
+    );
+    assert!(
+        with_short.height_dots <= l11() + 4,
+        "short inline math should sit on the prose slug, got {}",
+        with_short.height_dots
+    );
+}
+
+#[test]
+fn narrow_display_math_is_centered() {
+    let faces = common::table();
+    let bits = vec![true; 8 * 8];
+    let math = Math::from_bits(8, 8, &bits, 6).unwrap();
+    let g = compose(&Sheet::tape(vec![Frame::Math(math)]), &faces).unwrap();
+    let (x0, x1, _, _) = ink_bbox(&g);
+    let mid = u16::midpoint(x0, x1);
+    assert!(
+        (mid as i32 - PRINTABLE_DOTS as i32 / 2).abs() <= 8,
+        "narrow display [{x0},{x1}] should center on the tape"
     );
 }
 

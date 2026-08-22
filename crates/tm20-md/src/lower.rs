@@ -6,9 +6,9 @@ use std::num::NonZeroU32;
 use comrak::nodes::{AstNode, ListDelimType, ListType, NodeValue, TableAlignment};
 use comrak::{Arena, Options, parse_document};
 use tm20_set::{
-    Code, ColAlign, Cols, Cut, DecimalDelim, DisplaySize, Figure, Frame, GridSkip, Head, ItemMark,
-    List, ListFit, ListItem, Mark, MarkAlign, Marker, Measure, Note, Quote, Rule, Sheet, Span,
-    TextBlock, TextSize, Thickness, Tracking,
+    Code, ColAlign, Cols, Cut, DecimalDelim, DisplaySize, Figure, Frame, GridSkip, Head, ItemBody,
+    ItemMark, List, ListFit, ListItem, Mark, MarkAlign, Marker, Measure, Note, Quote, Rule, Sheet,
+    Span, TextBlock, TextSize, Thickness, Tracking,
 };
 
 use crate::error::Error;
@@ -39,6 +39,7 @@ pub fn sheet(
     let arena = Arena::new();
     let root = parse_document(&arena, markdown, &options());
     let mut cx = Cx {
+        source: markdown,
         measure: measure.get(),
         load,
         slots: Vec::new(),
@@ -61,7 +62,8 @@ enum Slot {
     Foot(String),
 }
 
-struct Cx<L> {
+struct Cx<'s, L> {
+    source: &'s str,
     measure: u16,
     load: L,
     slots: Vec<Slot>,
@@ -102,10 +104,13 @@ fn strong(v: Voice) -> Voice {
     }
 }
 
-impl<L> Cx<L>
+impl<'s, L> Cx<'s, L>
 where
     L: FnMut(&str) -> Result<Vec<u8>, Error>,
 {
+    fn source_line(&self, line: usize) -> &'s str {
+        self.source.lines().nth(line.saturating_sub(1)).unwrap_or("")
+    }
     fn text_size(&self) -> TextSize {
         if self.in_note { TextSize::Pt8 } else { BODY }
     }
@@ -175,38 +180,39 @@ where
             Job::List(nl) => Ok(Some(self.list(node, nl)?)),
             Job::Code(literal) => Ok(Some(code_frame(&literal, self.text_size()))),
             Job::Html => Err(Error::Html),
-            Job::Heading(level) => Ok(Some(self.heading(node, level)?)),
-            Job::Rule => Ok(Some(Frame::Rule(Rule {
-                thickness: Thickness::Two,
-            }))),
+            Job::Heading(level) => Ok(self.heading(node, level)?),
+            Job::Rule => Ok(Some(Frame::Rule(Rule::tape(Thickness::Two)))),
             Job::Table(alignments) => Ok(Some(self.table(node, &alignments)?)),
         }
     }
 
-    fn heading<'a>(&self, node: &'a AstNode<'a>, level: u8) -> Result<Frame<'static>, Error> {
+    fn heading<'a>(&self, node: &'a AstNode<'a>, level: u8) -> Result<Option<Frame<'static>>, Error> {
         if has_math(node) {
             return Err(Error::Math);
         }
         let text = flatten(node);
+        if text.is_empty() {
+            return Ok(None);
+        }
         if self.in_note {
-            return Ok(Frame::Head(Head {
+            return Ok(Some(Frame::Head(Head {
                 size: TextSize::Pt8,
                 text: text.into(),
-            }));
+            })));
         }
         if level <= 1 {
-            Ok(Frame::Mark(Mark {
+            Ok(Some(Frame::Mark(Mark {
                 cut: Cut::Roman,
                 size: DisplaySize::Pt18,
                 text: text.into(),
                 align: MarkAlign::Start,
                 tracking: Tracking(0),
-            }))
+            })))
         } else {
-            Ok(Frame::Head(Head {
+            Ok(Some(Frame::Head(Head {
                 size: BODY,
                 text: text.into(),
-            }))
+            })))
         }
     }
 
@@ -240,7 +246,7 @@ where
             };
             items.push(ListItem {
                 mark,
-                frames: self.blocks(child)?,
+                body: ItemBody::from_frames(self.blocks(child)?),
             });
         }
         self.list_depth -= 1;
@@ -311,24 +317,64 @@ where
         for row in node.children() {
             let header = matches!(row.data.borrow().value, NodeValue::TableRow(true));
             let voice = if header { Voice::Bold } else { Voice::Roman };
-            let mut cells = Vec::new();
-            for cell in row.children() {
-                let mut spans = self.inlines(cell, voice)?;
-                if header {
-                    for s in &mut spans {
+            let line = self.source_line(row.data.borrow().sourcepos.start.line);
+            let cells = split_table_cells(line);
+            let mut parsed = if cells.len() == n {
+                cells
+                    .iter()
+                    .map(|cell| self.cell_spans(cell, voice))
+                    .collect::<Result<Vec<_>, _>>()?
+            } else {
+                row.children()
+                    .map(|cell| self.inlines(cell, voice))
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+            if parsed.len() != n {
+                return Err(Error::Cols);
+            }
+            if header {
+                for spans in &mut parsed {
+                    for s in spans {
                         if let Span::Type { cut, .. } = s {
                             *cut = Cut::Bold;
                         }
                     }
                 }
-                cells.push(spans);
             }
-            if cells.len() != n {
-                return Err(Error::Cols);
-            }
-            rows.push(cells);
+            rows.push(parsed);
         }
         Ok(Frame::Cols(cols_frame(self.text_size(), &align, rows)?))
+    }
+
+    fn cell_spans(&mut self, cell: &str, voice: Voice) -> Result<Vec<Span<'static>>, Error> {
+        let arena = Arena::new();
+        let defs = footnote_defs(self.source);
+        let src = if defs.is_empty() {
+            cell.to_string()
+        } else {
+            format!("{cell}\n\n{defs}")
+        };
+        let root = parse_document(&arena, &src, &options());
+        let mut spans = Vec::new();
+        for child in root.children() {
+            match &child.data.borrow().value {
+                NodeValue::Paragraph => {
+                    for inline in child.children() {
+                        self.inline(inline, voice, &mut spans)?;
+                    }
+                }
+                NodeValue::FootnoteDefinition(_) => {}
+                _ => {
+                    if let Some(Frame::Text(b)) = self.block(child)? {
+                        spans.extend(b.spans);
+                    }
+                }
+            }
+        }
+        if spans.is_empty() {
+            spans.push(Span::new(cut(voice), ""));
+        }
+        Ok(spans)
     }
 
     fn inlines<'a>(
@@ -366,7 +412,7 @@ where
             let data = node.data.borrow();
             match &data.value {
                 NodeValue::Text(t) => {
-                    push(spans, cut(voice), t.as_ref(), None);
+                    push(spans, cut(voice), &ellipsis(t.as_ref()), None);
                     return Ok(());
                 }
                 NodeValue::SoftBreak => {
@@ -520,7 +566,7 @@ where
 fn code_frame(literal: &str, size: TextSize) -> Frame<'static> {
     let mut lines: Vec<std::borrow::Cow<'static, str>> = literal
         .split('\n')
-        .map(|s| std::borrow::Cow::Owned(s.to_string()))
+        .map(|s| std::borrow::Cow::Owned(tm20_set::detab(s).into_owned()))
         .collect();
     if lines.last().is_some_and(|s| s.is_empty()) {
         lines.pop();
@@ -609,6 +655,75 @@ fn triple(cells: Vec<Vec<Span<'static>>>) -> Result<[Vec<Span<'static>>; 3], Err
         it.next().ok_or(Error::Cols)?,
         it.next().ok_or(Error::Cols)?,
     ])
+}
+
+fn footnote_defs(source: &str) -> String {
+    let mut out = String::new();
+    let mut in_def = false;
+    for line in source.lines() {
+        if line.starts_with("[^") && line.contains("]:") {
+            in_def = true;
+            out.push_str(line);
+            out.push('\n');
+        } else if in_def && (line.starts_with("    ") || line.starts_with('\t') || line.is_empty()) {
+            out.push_str(line);
+            out.push('\n');
+        } else {
+            in_def = false;
+        }
+    }
+    out
+}
+
+fn ellipsis(s: &str) -> std::borrow::Cow<'_, str> {
+    if s.contains("...") {
+        std::borrow::Cow::Owned(s.replace("...", "\u{2026}"))
+    } else {
+        std::borrow::Cow::Borrowed(s)
+    }
+}
+
+/// Split a GFM row so `|` inside a code span is cell content, not a column.
+fn split_table_cells(line: &str) -> Vec<String> {
+    let chars: Vec<char> = line.trim().chars().collect();
+    let mut i = 0usize;
+    if chars.first() == Some(&'|') {
+        i = 1;
+    }
+    let mut cells = Vec::new();
+    let mut cur = String::new();
+    let mut code = 0usize;
+    while i < chars.len() {
+        let c = chars[i];
+        if code == 0 && c == '\\' && chars.get(i + 1) == Some(&'|') {
+            cur.push('|');
+            i += 2;
+            continue;
+        }
+        if c == '`' {
+            let n = chars[i..].iter().take_while(|ch| **ch == '`').count();
+            if code == 0 {
+                code = n;
+            } else if n == code {
+                code = 0;
+            }
+            cur.extend(std::iter::repeat_n('`', n));
+            i += n;
+            continue;
+        }
+        if c == '|' && code == 0 {
+            cells.push(cur.trim().to_string());
+            cur.clear();
+            i += 1;
+            continue;
+        }
+        cur.push(c);
+        i += 1;
+    }
+    if !cur.is_empty() {
+        cells.push(cur.trim().to_string());
+    }
+    cells
 }
 
 fn push(spans: &mut Vec<Span<'static>>, cut: Cut, text: &str, note: Option<NonZeroU32>) {
