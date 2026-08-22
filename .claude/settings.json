@@ -2,6 +2,7 @@
   "sandbox": {
     "network": {
       "allowedDomains": ["github.com"]
-    }
+    },
+    "excludedCommands": ["target/debug/tm20-set"]
   }
 }
