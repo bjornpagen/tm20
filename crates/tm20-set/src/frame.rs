@@ -74,20 +74,17 @@ impl<'a> Span<'a> {
         }
     }
 
-    pub fn math(m: Math) -> Self {
-        Self::Math(m)
+    /// A noted type span. Math has no constructor that takes a note.
+    pub fn noted(cut: Cut, text: impl Into<Cow<'a, str>>, n: NonZeroU32) -> Self {
+        Self::Type {
+            cut,
+            text: text.into(),
+            note: Some(n),
+        }
     }
 
-    #[must_use]
-    pub fn noted(self, n: NonZeroU32) -> Self {
-        match self {
-            Self::Type { cut, text, .. } => Self::Type {
-                cut,
-                text,
-                note: Some(n),
-            },
-            Self::Math(_) => panic!("a note attaches to type, not math"),
-        }
+    pub fn math(m: Math) -> Self {
+        Self::Math(m)
     }
 }
 

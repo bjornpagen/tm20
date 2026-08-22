@@ -1,7 +1,8 @@
 //! Typesetting language for [`tm20`]. A [`Sheet`] of [`Frame`]s plus a
 //! [`FaceTable`] lowers to one or more protocol [`tm20::Graphics`]. OpenType never enters
 //! the protocol crate. Faces are bytes; which files they came from is not
-//! this crate’s decision.
+//! this crate’s decision. [`HOUSE`] is the PostScript-name → [`Voice`] table
+//! that fills a table from a collection; compose parses a [`Kit`] once.
 
 mod cols;
 mod compose;
@@ -16,7 +17,7 @@ mod strike;
 
 pub use compose::compose;
 pub use error::Error;
-pub use face::{Cut, DisplayCut, DisplayFace, Face, FaceTable, Kit, TextFace};
+pub use face::{Cut, DisplayCut, DisplayFace, Face, FaceTable, HOUSE, Kit, TextFace, Voice};
 pub use frame::{
     Code, ColAlign, ColBody, Cols, DecimalDelim, EN_DASH, Figure, Frame, Head, ItemBody, ItemMark,
     List, ListFit, ListItem, Mark, MarkAlign, Marker, Math, Measure, Note, Quote, Rule, RuleSpan,

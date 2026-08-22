@@ -56,6 +56,27 @@ pub enum DisplayCut {
     Light,
 }
 
+/// Optical slot a PostScript name fills. One name may fill text and display
+/// (Helvetica Regular is both Roman voices). The assignment is this table,
+/// not a match in each loader.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Voice {
+    Text(Cut),
+    Display(DisplayCut),
+    Both(Cut, DisplayCut),
+}
+
+/// House names. Paths stay with the program that reads the files; this table
+/// is the parse from a collection face onto a [`Cut`].
+pub const HOUSE: &[(&str, Voice)] = &[
+    ("Helvetica", Voice::Both(Cut::Roman, DisplayCut::Roman)),
+    ("Helvetica-Bold", Voice::Text(Cut::Bold)),
+    ("Helvetica-Oblique", Voice::Text(Cut::Italic)),
+    ("Helvetica-BoldOblique", Voice::Text(Cut::BoldItalic)),
+    ("Helvetica-Light", Voice::Display(DisplayCut::Light)),
+    ("Menlo-Regular", Voice::Text(Cut::Mono)),
+];
+
 impl DisplayCut {
     const COUNT: usize = 2;
 
@@ -91,6 +112,38 @@ impl FaceTable {
 
     pub fn set_display(&mut self, cut: DisplayCut, face: DisplayFace) {
         self.display[cut.index()] = Some(face);
+    }
+
+    /// Offer a parsed face to the slots its PostScript name owns. Unknown
+    /// names are ignored — a collection is a bag, not a kit.
+    pub fn offer(&mut self, face: Face) -> bool {
+        let Some(name) = face.postscript_name() else {
+            return false;
+        };
+        let Some((_, voice)) = HOUSE.iter().find(|(n, _)| *n == name.as_str()) else {
+            return false;
+        };
+        match *voice {
+            Voice::Text(cut) => self.set_text(cut, face.text()),
+            Voice::Display(cut) => self.set_display(cut, face.display()),
+            Voice::Both(text, display) => {
+                self.set_display(display, face.reopen().display());
+                self.set_text(text, face.text());
+            }
+        }
+        true
+    }
+
+    /// Walk every face in an sfnt collection and [`offer`](Self::offer) each.
+    /// The first unparseable index is the end of the collection.
+    pub fn absorb(&mut self, bytes: impl Into<Arc<[u8]>>) {
+        let bytes = bytes.into();
+        for index in 0.. {
+            let Ok(face) = Face::from_bytes_index(bytes.clone(), index) else {
+                break;
+            };
+            self.offer(face);
+        }
     }
 
     pub fn text(&self, cut: Cut) -> Result<&TextFace, Error> {
@@ -318,7 +371,12 @@ impl Face {
         DisplayFace(self)
     }
 
-    /// PostScript name (name id 6). Kit maps this to a [`Cut`].
+    fn reopen(&self) -> Self {
+        Self::from_bytes_index(Arc::clone(&self.bytes), self.index)
+            .expect("Face bytes already parsed")
+    }
+
+    /// PostScript name (name id 6). [`HOUSE`] maps this to a [`Voice`].
     pub fn postscript_name(&self) -> Option<String> {
         let data = self.font().table_data(Tag::new(b"name"))?;
         parse_postscript_name(data.as_bytes())
@@ -522,39 +580,10 @@ mod tests {
 
     #[test]
     fn kit_indexes_text_by_cut() {
-        let helv: Arc<[u8]> = std::fs::read("/System/Library/Fonts/Helvetica.ttc")
-            .expect("Helvetica.ttc")
-            .into();
-        let menlo: Arc<[u8]> = std::fs::read("/System/Library/Fonts/Menlo.ttc")
-            .expect("Menlo.ttc")
-            .into();
         let mut table = FaceTable::new();
-        for (bytes, is_mono) in [(&helv, false), (&menlo, true)] {
-            for index in 0.. {
-                let Ok(face) = Face::from_bytes_index(bytes.clone(), index) else {
-                    break;
-                };
-                match (face.postscript_name().as_deref(), is_mono) {
-                    (Some("Helvetica"), false) => {
-                        table.set_text(
-                            Cut::Roman,
-                            Face::from_bytes_index(bytes.clone(), index).unwrap().text(),
-                        );
-                        table.set_display(DisplayCut::Roman, face.display());
-                    }
-                    (Some("Helvetica-Bold"), false) => table.set_text(Cut::Bold, face.text()),
-                    (Some("Helvetica-Oblique"), false) => {
-                        table.set_text(Cut::Italic, face.text());
-                    }
-                    (Some("Helvetica-BoldOblique"), false) => {
-                        table.set_text(Cut::BoldItalic, face.text());
-                    }
-                    (Some("Menlo-Regular"), true) => table.set_text(Cut::Mono, face.text()),
-                    _ => {}
-                }
-            }
-        }
-        let kit = table.kit().expect("all five cuts and Roman display");
+        table.absorb(std::fs::read("/System/Library/Fonts/Helvetica.ttc").expect("Helvetica.ttc"));
+        table.absorb(std::fs::read("/System/Library/Fonts/Menlo.ttc").expect("Menlo.ttc"));
+        let kit = table.kit().expect("house collections fill a kit");
         for cut in [
             Cut::Roman,
             Cut::Italic,
@@ -567,10 +596,41 @@ mod tests {
                 "kit[{cut}] must be the table's {cut}"
             );
         }
+        assert!(
+            kit.display(DisplayCut::Light).is_ok(),
+            "Helvetica-Light is a house voice"
+        );
+    }
+
+    #[test]
+    fn kit_without_light_is_still_a_kit() {
+        let mut table = FaceTable::new();
+        table.absorb(std::fs::read("/System/Library/Fonts/Menlo.ttc").expect("Menlo.ttc"));
+        let bytes: Arc<[u8]> = std::fs::read("/System/Library/Fonts/Helvetica.ttc")
+            .expect("Helvetica.ttc")
+            .into();
+        for index in 0.. {
+            let Ok(face) = Face::from_bytes_index(bytes.clone(), index) else {
+                break;
+            };
+            if face.postscript_name().as_deref() == Some("Helvetica-Light") {
+                continue;
+            }
+            table.offer(face);
+        }
+        let kit = table.kit().expect("Light is optional until a Mark names it");
         assert!(matches!(
             kit.display(DisplayCut::Light),
             Err(Error::MissingDisplay(DisplayCut::Light))
         ));
+    }
+
+    #[test]
+    fn house_names_are_unique() {
+        let mut seen = std::collections::BTreeSet::new();
+        for (name, _) in HOUSE {
+            assert!(seen.insert(*name), "duplicate house name {name}");
+        }
     }
 
     #[test]

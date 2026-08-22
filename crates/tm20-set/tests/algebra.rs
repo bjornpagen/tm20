@@ -1494,7 +1494,7 @@ fn figure_as_wide_as_the_measure_is_a_full_slice() {
 #[test]
 fn notes_follow_the_frames() {
     let faces = common::table();
-    let span = Span::new(Cut::Italic, "Canon").noted(std::num::NonZeroU32::new(1).unwrap());
+    let span = Span::noted(Cut::Italic, "Canon", std::num::NonZeroU32::new(1).unwrap());
     let mut sheet = Sheet::tape(vec![Frame::Text(TextBlock {
         size: TextSize::Pt11,
         spans: vec![span],
@@ -1521,7 +1521,7 @@ fn notes_follow_the_frames() {
 #[test]
 fn notes_rule_has_two_points_of_air() {
     let faces = common::table();
-    let span = Span::new(Cut::Roman, "H").noted(std::num::NonZeroU32::new(1).unwrap());
+    let span = Span::noted(Cut::Roman, "H", std::num::NonZeroU32::new(1).unwrap());
     let mut sheet = Sheet::tape(vec![Frame::Text(TextBlock {
         size: TextSize::Pt11,
         spans: vec![span],
@@ -1571,7 +1571,7 @@ fn notes_rule_has_two_points_of_air() {
 fn dest_title_is_two_lines() {
     let faces = common::table();
     let g1 = {
-        let span = Span::new(Cut::Italic, "Canon").noted(std::num::NonZeroU32::new(1).unwrap());
+        let span = Span::noted(Cut::Italic, "Canon", std::num::NonZeroU32::new(1).unwrap());
         let mut sheet = Sheet::tape(vec![Frame::Text(TextBlock {
             size: TextSize::Pt11,
             spans: vec![span],
@@ -1580,7 +1580,7 @@ fn dest_title_is_two_lines() {
         compose(&sheet, &faces).unwrap()
     };
     let g2 = {
-        let span = Span::new(Cut::Italic, "Canon").noted(std::num::NonZeroU32::new(1).unwrap());
+        let span = Span::noted(Cut::Italic, "Canon", std::num::NonZeroU32::new(1).unwrap());
         let mut sheet = Sheet::tape(vec![Frame::Text(TextBlock {
             size: TextSize::Pt11,
             spans: vec![span],
@@ -1653,7 +1653,7 @@ fn dump_preview_pngs() {
         "Hello Hello Hello Hello Hello Hello Hello Hello Hello Hello Hello Hello Hello Hello Hello Hello",
     );
     let mut notes = Sheet::tape(vec![text("Body.")]);
-    let span = Span::new(Cut::Italic, "Canon").noted(std::num::NonZeroU32::new(1).unwrap());
+    let span = Span::noted(Cut::Italic, "Canon", std::num::NonZeroU32::new(1).unwrap());
     notes.frames = vec![Frame::Text(TextBlock {
         size: TextSize::Pt11,
         spans: vec![span],
@@ -1835,7 +1835,7 @@ fn note_dest_wraps_instead_of_clipping() {
     let faces = common::table();
     let mut sheet = Sheet::tape(vec![Frame::Text(TextBlock {
         size: TextSize::Pt11,
-        spans: vec![Span::new(Cut::Roman, "See").noted(NonZeroU32::new(1).unwrap())],
+        spans: vec![Span::noted(Cut::Roman, "See", NonZeroU32::new(1).unwrap())],
     })]);
     sheet.notes = vec![Note::dest(
         "https://example.com/one/two/three/four/five/six/seven/eight/nine/ten/eleven/x",

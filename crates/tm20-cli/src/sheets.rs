@@ -180,15 +180,13 @@ fn helvetica() -> Result<Document> {
         align: MarkAlign::Start,
         tracking: Tracking(0),
     })];
-    if faces.display(DisplayCut::Light).is_ok() {
-        frames.push(Frame::Mark(Mark {
-            cut: DisplayCut::Light,
-            size: DisplaySize::Pt18,
-            text: "Light".into(),
-            align: MarkAlign::Start,
-            tracking: Tracking(40),
-        }));
-    }
+    frames.push(Frame::Mark(Mark {
+        cut: DisplayCut::Light,
+        size: DisplaySize::Pt18,
+        text: "Light".into(),
+        align: MarkAlign::Start,
+        tracking: Tracking(40),
+    }));
     frames.extend([
         Frame::Rule(Rule::tape(Thickness::Two)),
         Frame::Text(TextBlock {
@@ -212,8 +210,8 @@ fn suite() -> Result<Document> {
     let faces = system_table()?;
     let body = TextSize::Pt11;
     let pig = Figure::from_image(include_bytes!("pig.png"), 160)?;
-    let canon = Span::new(Cut::Italic, "The Vignelli Canon").noted(NonZeroU32::new(1).unwrap());
-    let ruder = Span::new(Cut::Italic, "Typographie").noted(NonZeroU32::new(2).unwrap());
+    let canon = Span::noted(Cut::Italic, "The Vignelli Canon", NonZeroU32::new(1).unwrap());
+    let ruder = Span::noted(Cut::Italic, "Typographie", NonZeroU32::new(2).unwrap());
     let mut sheet = Sheet::tape(vec![
         Frame::Mark(Mark {
             cut: DisplayCut::Roman,
