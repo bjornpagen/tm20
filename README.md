@@ -5,7 +5,9 @@ A local-first attention control plane built on
 through [tm20](https://github.com/bjornpagen/tm20).
 
 This repository is deliberately a library, not a daemon. Runtime, scheduling,
-credentials, and live provider clients remain host decisions. The library
+credentials, and live network clients remain host decisions. Provider modules
+ship as complete mock scaffolds over deterministic HTTP transcripts; their
+wire contracts are documented in [`PROTOCOLS.md`](PROTOCOLS.md). The library
 defines the stable part first:
 
 - a constraint-checked routing ledger;
@@ -13,7 +15,10 @@ defines the stable part first:
 - deterministic routing and writeback policy as data;
 - bounded interrupt and digest tapes;
 - delivery typestates that distinguish failure from uncertainty;
-- capability and rollout data for HN, Gmail, Slack, Google Chat, and SMServer.
+- capability and rollout data for HN, Gmail, Slack, Google Chat, and the
+  iMessage bridge.
+- realistic mock connectors for HN, Gmail, Slack, Google Chat, and an invented
+  iMessage bridge protocol.
 
 ## Doctrine
 
@@ -80,7 +85,7 @@ and no unsafe full-excerpt rule.
 | Gmail | `historyId` | polling, later Pub/Sub | mark read |
 | Slack | channel message timestamp | Socket Mode | none |
 | Google Chat | overlapped space-event time | later Pub/Sub | none |
-| iMessage | bridge + message GUID | SMServer WebSocket | read receipt |
+| iMessage | bridge + message GUID | bridge push events | read receipt |
 
 The sequence is synthetic fixtures, Hacker News, Gmail, Slack, Google Chat,
 then the version-fragile jailbroken-phone bridge. Each stage's proof gate is

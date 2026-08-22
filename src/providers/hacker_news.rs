@@ -83,10 +83,7 @@ impl From<HnEvent> for NormalizedObservation {
             } else {
                 digest("hn-thread", parent)
             },
-            event: digest_parts(
-                "hn-event",
-                &[&id, &time, &score, &descendants, &status],
-            ),
+            event: digest_parts("hn-event", &[&id, &time, &score, &descendants, &status]),
             payload: digest("hn-payload", payload),
             kind: event.kind,
             occurred_at: event.item.time.saturating_mul(1_000),
@@ -214,10 +211,7 @@ where
 
         Ok(TypedPullBatch {
             observations,
-            next_cursor: HnCursor {
-                max_item,
-                ranked,
-            },
+            next_cursor: HnCursor { max_item, ranked },
         })
     }
 
@@ -278,6 +272,9 @@ mod tests {
         let batch = connector.pull(None).expect("pull");
         assert_eq!(batch.observations.len(), 2);
         assert_eq!(batch.next_cursor.max_item, 42);
-        assert_eq!(connector.into_inner().finish().expect("transcript").len(), 4);
+        assert_eq!(
+            connector.into_inner().finish().expect("transcript").len(),
+            4
+        );
     }
 }

@@ -119,11 +119,9 @@ fn parse_millis(value: &str) -> Result<i64, ProviderError> {
         provider: "google-chat",
         reason: format!("eventTime is not RFC3339: {error}"),
     })?;
-    i64::try_from(time.unix_timestamp_nanos() / 1_000_000).map_err(|_| {
-        ProviderError::Protocol {
-            provider: "google-chat",
-            reason: "eventTime does not fit i64 milliseconds".into(),
-        }
+    i64::try_from(time.unix_timestamp_nanos() / 1_000_000).map_err(|_| ProviderError::Protocol {
+        provider: "google-chat",
+        reason: "eventTime does not fit i64 milliseconds".into(),
     })
 }
 
@@ -202,11 +200,10 @@ where
                 .unwrap_or_else(|| EPOCH.to_owned());
             let mut page = String::new();
             loop {
-                let mut request =
-                    HttpRequest::get(format!("/chat/v1/{space}/spaceEvents"))
-                        .query("filter", format!("eventTime > \"{after}\""))
-                        .query("eventTypes", EVENT_TYPES)
-                        .query("pageSize", "1000");
+                let mut request = HttpRequest::get(format!("/chat/v1/{space}/spaceEvents"))
+                    .query("filter", format!("eventTime > \"{after}\""))
+                    .query("eventTypes", EVENT_TYPES)
+                    .query("pageSize", "1000");
                 if !page.is_empty() {
                     request = request.query("pageToken", page.clone());
                 }
@@ -222,7 +219,7 @@ where
                         .entry(space.to_string())
                         .and_modify(|time| {
                             if event.event_time > *time {
-                                *time = event.event_time.clone();
+                                time.clone_from(&event.event_time);
                             }
                         })
                         .or_insert_with(|| event.event_time.clone());
@@ -299,6 +296,9 @@ mod tests {
         let batch = connector.pull(None).expect("pull");
         assert_eq!(batch.observations.len(), 1);
         assert_eq!(batch.next_cursor.watermarks.len(), 1);
-        assert_eq!(connector.into_inner().finish().expect("transcript").len(), 1);
+        assert_eq!(
+            connector.into_inner().finish().expect("transcript").len(),
+            1
+        );
     }
 }

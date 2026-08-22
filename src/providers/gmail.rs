@@ -145,12 +145,19 @@ pub struct GmailEvent {
 impl From<GmailEvent> for NormalizedObservation {
     fn from(event: GmailEvent) -> Self {
         let payload = serde_json::to_vec(&event.message).expect("GmailMessage is JSON-safe");
-        let occurred_at = event.message.internal_date.parse::<i64>().unwrap_or_default();
+        let occurred_at = event
+            .message
+            .internal_date
+            .parse::<i64>()
+            .unwrap_or_default();
         Self {
             account: digest("gmail-account", event.account.as_str()),
             object: digest_parts(
                 "gmail-message",
-                &[event.account.as_str().as_bytes(), event.message.id.as_bytes()],
+                &[
+                    event.account.as_str().as_bytes(),
+                    event.message.id.as_bytes(),
+                ],
             ),
             thread: digest_parts(
                 "gmail-thread",
@@ -237,9 +244,7 @@ where
             .map_err(|error| provider_error("gmail", error))
     }
 
-    fn initial_pull(
-        &mut self,
-    ) -> Result<TypedPullBatch<GmailCursor, GmailEvent>, ProviderError> {
+    fn initial_pull(&mut self) -> Result<TypedPullBatch<GmailCursor, GmailEvent>, ProviderError> {
         let profile: GmailProfile = self
             .http
             .execute(HttpRequest::get("/gmail/v1/users/me/profile"))
@@ -486,6 +491,9 @@ mod tests {
             connector.apply(&effect).expect("apply"),
             EffectOutcome::Applied { .. }
         ));
-        assert_eq!(connector.into_inner().finish().expect("transcript").len(), 3);
+        assert_eq!(
+            connector.into_inner().finish().expect("transcript").len(),
+            3
+        );
     }
 }

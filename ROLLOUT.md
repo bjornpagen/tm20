@@ -86,12 +86,12 @@ Exit proofs:
 - subscription expiry loses no events;
 - no read-state effect is advertised until the API proves one.
 
-## 5. iMessage via SMServer
+## 5. iMessage bridge
 
 Experimental and last. The bridge stays LAN/VPN-only with pinned TLS.
 
-Setup gate: the exact phone, iOS version, jailbreak, and SMServer build pass a
-compatibility fixture.
+Setup gate: the exact phone, iOS version, jailbreak, and bridge implementation
+pass the protocol-v1 compatibility fixture.
 
 Exit proofs:
 

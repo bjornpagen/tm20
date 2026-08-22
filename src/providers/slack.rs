@@ -251,7 +251,7 @@ where
                     .entry(event.event.channel.clone())
                     .and_modify(|timestamp| {
                         if event.event.ts > *timestamp {
-                            *timestamp = event.event.ts.clone();
+                            timestamp.clone_from(&event.event.ts);
                         }
                     })
                     .or_insert_with(|| event.event.ts.clone());
@@ -298,7 +298,7 @@ where
                             .entry(channel.to_string())
                             .and_modify(|timestamp| {
                                 if message.ts > *timestamp {
-                                    *timestamp = message.ts.clone();
+                                    timestamp.clone_from(&message.ts);
                                 }
                             })
                             .or_insert_with(|| message.ts.clone());
@@ -384,6 +384,9 @@ mod tests {
         let batch = connector.pull(None).expect("pull");
         assert_eq!(batch.observations.len(), 1);
         assert_eq!(batch.next_cursor.watermarks.len(), 1);
-        assert_eq!(connector.into_inner().finish().expect("transcript").len(), 1);
+        assert_eq!(
+            connector.into_inner().finish().expect("transcript").len(),
+            1
+        );
     }
 }

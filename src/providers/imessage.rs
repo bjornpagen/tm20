@@ -48,15 +48,16 @@ impl CursorCodec for IMessageCursor {
 pub struct BridgeInfo {
     pub bridge_id: String,
     pub protocol_version: u16,
-    pub capabilities: BridgeCapabilities,
+    pub capabilities: Vec<BridgeCapability>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BridgeCapabilities {
-    pub event_backfill: bool,
-    pub push_events: bool,
-    pub read_receipts: bool,
-    pub attachments: bool,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BridgeCapability {
+    EventBackfill,
+    PushEvents,
+    ReadReceipts,
+    Attachments,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,7 +78,9 @@ pub struct BridgeEvent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum BridgeEventKind {
-    MessageCreated { message: IMessage },
+    MessageCreated {
+        message: IMessage,
+    },
     MessageEdited {
         conversation_id: String,
         message_id: String,
@@ -218,11 +221,9 @@ fn parse_millis(value: &str) -> Result<i64, ProviderError> {
         provider: "imessage",
         reason: format!("event time is not RFC3339: {error}"),
     })?;
-    i64::try_from(time.unix_timestamp_nanos() / 1_000_000).map_err(|_| {
-        ProviderError::Protocol {
-            provider: "imessage",
-            reason: "event time does not fit i64 milliseconds".into(),
-        }
+    i64::try_from(time.unix_timestamp_nanos() / 1_000_000).map_err(|_| ProviderError::Protocol {
+        provider: "imessage",
+        reason: "event time does not fit i64 milliseconds".into(),
     })
 }
 
@@ -333,7 +334,9 @@ where
             .map_err(|error| provider_error("imessage", error))?
             .json()
             .map_err(|error| provider_error("imessage", error))?;
-        if info.protocol_version != PROTOCOL_VERSION || !info.capabilities.event_backfill {
+        if info.protocol_version != PROTOCOL_VERSION
+            || !info.capabilities.contains(&BridgeCapability::EventBackfill)
+        {
             return Err(ProviderError::Protocol {
                 provider: "imessage",
                 reason: "bridge protocol version or backfill capability is incompatible".into(),
@@ -449,12 +452,12 @@ mod tests {
         BridgeInfo {
             bridge_id: "phone-1".into(),
             protocol_version: 1,
-            capabilities: BridgeCapabilities {
-                event_backfill: true,
-                push_events: true,
-                read_receipts: true,
-                attachments: true,
-            },
+            capabilities: vec![
+                BridgeCapability::EventBackfill,
+                BridgeCapability::PushEvents,
+                BridgeCapability::ReadReceipts,
+                BridgeCapability::Attachments,
+            ],
         }
     }
 
@@ -521,10 +524,8 @@ mod tests {
             target: EffectTarget {
                 account: digest("test", b"account"),
                 object: digest("test", b"message"),
-                locator: ProviderLocator::parse(
-                    "imessage:conversation:chat-1:message:msg-1",
-                )
-                .expect("locator"),
+                locator: ProviderLocator::parse("imessage:conversation:chat-1:message:msg-1")
+                    .expect("locator"),
             },
         };
         let effect = IMessageReadReceipt::try_from(request).expect("effect");
@@ -532,6 +533,9 @@ mod tests {
             connector.apply(&effect).expect("receipt"),
             EffectOutcome::Applied { .. }
         ));
-        assert_eq!(connector.into_inner().finish().expect("transcript").len(), 3);
+        assert_eq!(
+            connector.into_inner().finish().expect("transcript").len(),
+            3
+        );
     }
 }

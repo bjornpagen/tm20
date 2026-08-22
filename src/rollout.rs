@@ -114,16 +114,16 @@ impl BuiltinConnector {
             Self::IMessage => ConnectorPlan {
                 connector: self,
                 descriptor: ConnectorDescriptor {
-                    key: ConnectorKey::new("imessage-smserver"),
-                    label: "iMessage via SMServer",
+                    key: ConnectorKey::new("imessage-bridge"),
+                    label: "iMessage bridge",
                     class: SourceClass::PersonalMessaging,
                     capabilities: IMESSAGE_CAPABILITIES,
                 },
                 ingestion: Ingestion::SocketWithReconciliation,
                 durable_cursor: "bridge identity plus message GUID",
-                recovery: "SMServer REST backfill after WebSocket reconnect",
+                recovery: "bridge REST backfill after push reconnect",
                 setup_gate: SetupGate::JailbreakBridgeCompatibility,
-                risk: "private iOS frameworks and background execution are version-fragile",
+                risk: "the separately implemented jailbreak bridge is version-fragile",
             },
         }
     }

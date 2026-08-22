@@ -154,11 +154,11 @@ impl HttpTransport for MockHttp {
         let exchange = self
             .exchanges
             .pop_front()
-            .ok_or_else(|| TransportError::UnexpectedRequest(request.clone()))?;
+            .ok_or_else(|| TransportError::UnexpectedRequest(Box::new(request.clone())))?;
         if exchange.request != request {
             return Err(TransportError::RequestMismatch {
-                expected: exchange.request,
-                actual: request,
+                expected: Box::new(exchange.request),
+                actual: Box::new(request),
             });
         }
         self.observed.push(request);
@@ -172,10 +172,10 @@ pub enum TransportError {
     FixtureJson(serde_json::Error),
     ResponseJson(serde_json::Error),
     Http(HttpStatus),
-    UnexpectedRequest(HttpRequest),
+    UnexpectedRequest(Box<HttpRequest>),
     RequestMismatch {
-        expected: HttpRequest,
-        actual: HttpRequest,
+        expected: Box<HttpRequest>,
+        actual: Box<HttpRequest>,
     },
     UnconsumedExchanges(usize),
 }
@@ -235,7 +235,10 @@ mod tests {
         http.expect_json(request.clone(), 200, Fixture { value: 42 })
             .expect("fixture");
         let response = http.execute(request).expect("exchange");
-        assert_eq!(response.json::<Fixture>().expect("json"), Fixture { value: 42 });
+        assert_eq!(
+            response.json::<Fixture>().expect("json"),
+            Fixture { value: 42 }
+        );
         assert_eq!(http.finish().expect("complete").len(), 1);
     }
 }

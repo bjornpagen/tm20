@@ -3,8 +3,8 @@ use paper_attention_router::providers::gmail::{
     GmailMessage, GmailMessageAdded, GmailMessageRef, GmailPayload, ModifyMessage,
 };
 use paper_attention_router::{
-    Candidate, Connector, CursorCodec, DeliveryMachine, Digest, DigestItem, EffectOutcome,
-    EditionId, EffectTarget, EffectVerb, ErasedConnector, ExternalKey, HttpRequest,
+    Candidate, Connector, CursorCodec, CursorToken, DeliveryMachine, Digest, DigestItem, EditionId,
+    EffectOutcome, EffectTarget, EffectVerb, ErasedConnector, ExternalKey, HttpRequest,
     InterruptionWindow, Lane, MockHttp, Privacy, ProviderLocator, Section, SenderTrust, Signal,
     SourceClass, SourceCopy, UnixMillis, Urgency, default_policy, render_digest,
 };
@@ -35,8 +35,11 @@ fn message(unread: bool) -> GmailMessage {
     }
 }
 
-#[test]
-fn gmail_mock_runs_through_route_paper_delivery_and_writeback() {
+fn gmail_fixture() -> (
+    ErasedConnector<GmailConnector<MockHttp>>,
+    CursorToken,
+    ExternalKey,
+) {
     let mut http = MockHttp::new();
     http.expect_json(
         HttpRequest::get("/gmail/v1/users/me/history")
@@ -86,11 +89,16 @@ fn gmail_mock_runs_through_route_paper_delivery_and_writeback() {
 
     let account = GmailAccount::parse("me@example.com").expect("account");
     let gmail = GmailConnector::new(http, account);
-    let mut connector = ErasedConnector::new(gmail);
     let cursor = GmailCursor {
         history_id: "100".into(),
     }
     .encode();
+    (ErasedConnector::new(gmail), cursor, idempotency)
+}
+
+#[test]
+fn gmail_mock_runs_through_route_paper_delivery_and_writeback() {
+    let (mut connector, cursor, idempotency) = gmail_fixture();
     let batch = connector.pull(Some(&cursor)).expect("pull");
     assert_eq!(batch.observations.len(), 1);
     let observation = &batch.observations[0];
@@ -115,24 +123,23 @@ fn gmail_mock_runs_through_route_paper_delivery_and_writeback() {
     .project(decision.privacy)
     .expect("privacy projection");
     assert_eq!(copy.as_str(), "Status");
-    let item = DigestItem::parse(Section::Mail, "Gmail", "Ada", "now", copy, 1)
-        .expect("digest item");
+    let item =
+        DigestItem::parse(Section::Mail, "Gmail", "Ada", "now", copy, 1).expect("digest item");
     let digest = Digest::parse("Now", "D-MOCK", vec![item], 1).expect("digest");
     let rendered = render_digest(&digest);
     assert!(rendered.markdown.contains("Status"));
     assert!(!rendered.markdown.contains("private body"));
 
     let encoded = ExternalKey([3; 32]);
-    let delivered =
-        DeliveryMachine::plan(
-            paper_attention_router::AttemptId(1),
-            EditionId(1),
-            0,
-            UnixMillis(1),
-        )
-        .encoded(UnixMillis(2), encoded)
-        .transmitting(UnixMillis(3))
-        .delivered(UnixMillis(4));
+    let delivered = DeliveryMachine::plan(
+        paper_attention_router::AttemptId(1),
+        EditionId(1),
+        0,
+        UnixMillis(1),
+    )
+    .encoded(UnixMillis(2), encoded)
+    .transmitting(UnixMillis(3))
+    .delivered(UnixMillis(4));
     let verb = policy
         .effects_for(candidate, decision)
         .next()
