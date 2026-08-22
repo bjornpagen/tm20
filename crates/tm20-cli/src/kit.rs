@@ -3,7 +3,7 @@
 use std::io;
 use std::sync::Arc;
 
-use tm20_set::{Cut, Face, FaceTable};
+use tm20_set::{Cut, DisplayCut, Face, FaceTable};
 
 use crate::Result;
 
@@ -33,12 +33,12 @@ pub fn system_table() -> Result<FaceTable> {
                     Cut::Roman,
                     Face::from_bytes_index(bytes.clone(), index)?.text(),
                 );
-                table.set_display(Cut::Roman, face.display());
+                table.set_display(DisplayCut::Roman, face.display());
             }
             "Helvetica-Bold" => table.set_text(Cut::Bold, face.text()),
             "Helvetica-Oblique" => table.set_text(Cut::Italic, face.text()),
             "Helvetica-BoldOblique" => table.set_text(Cut::BoldItalic, face.text()),
-            "Helvetica-Light" => table.set_display(Cut::Light, face.display()),
+            "Helvetica-Light" => table.set_display(DisplayCut::Light, face.display()),
             _ => {}
         }
     }
@@ -59,11 +59,7 @@ pub fn system_table() -> Result<FaceTable> {
             break;
         }
     }
-    table.text(Cut::Roman)?;
-    table.text(Cut::Italic)?;
-    table.text(Cut::Bold)?;
-    table.text(Cut::BoldItalic)?;
-    table.text(Cut::Mono)?;
-    table.display(Cut::Roman)?;
+    // Completeness is the compose boundary's parse: lower() builds a Kit
+    // and reports any missing cut once, there.
     Ok(table)
 }

@@ -6,7 +6,7 @@ use std::num::NonZeroU32;
 use comrak::nodes::{AstNode, ListDelimType, ListType, NodeValue, TableAlignment};
 use comrak::{Arena, Options, parse_document};
 use tm20_set::{
-    Code, ColAlign, Cols, Cut, DecimalDelim, DisplaySize, Figure, Frame, GridSkip, Head, ItemBody,
+    Code, ColAlign, Cols, Cut, DecimalDelim, DisplayCut, DisplaySize, Figure, Frame, GridSkip, Head, ItemBody,
     ItemMark, List, ListFit, ListItem, Mark, MarkAlign, Marker, Measure, Note, Quote, Rule, Sheet,
     Span, TextBlock, TextSize, Thickness, Tracking,
 };
@@ -36,6 +36,15 @@ pub fn sheet(
     measure: Measure,
     load: impl FnMut(&str) -> Result<Vec<u8>, Error>,
 ) -> Result<Sheet<'static>, Error> {
+    // CommonMark 2.3: U+0000 is insecure. The tape shows U+FFFD, visibly,
+    // instead of a silent zero-width hole between two words.
+    let owned;
+    let markdown = if markdown.contains('\u{0}') {
+        owned = markdown.replace('\u{0}', "\u{FFFD}");
+        owned.as_str()
+    } else {
+        markdown
+    };
     let arena = Arena::new();
     let root = parse_document(&arena, markdown, &options());
     let mut cx = Cx {
@@ -202,7 +211,7 @@ where
         }
         if level <= 1 {
             Ok(Some(Frame::Mark(Mark {
-                cut: Cut::Roman,
+                cut: DisplayCut::Roman,
                 size: DisplaySize::Pt18,
                 text: text.into(),
                 align: MarkAlign::Start,
@@ -513,7 +522,13 @@ where
         if stored.is_empty() {
             return None;
         }
-        if title.is_empty() && (dest == text || stored == text) {
+        // A GFM bare autolink's dest is its own text plus a scheme comrak
+        // added. A link whose destination is its text carries no note.
+        let auto = dest == text
+            || stored == text
+            || stored.strip_prefix("http://").is_some_and(|r| r == text)
+            || stored.strip_prefix("https://").is_some_and(|r| r == text);
+        if title.is_empty() && auto {
             return None;
         }
         if let Some(i) = self.slots.iter().position(|s| match s {
@@ -564,14 +579,7 @@ where
 }
 
 fn code_frame(literal: &str, size: TextSize) -> Frame<'static> {
-    let mut lines: Vec<std::borrow::Cow<'static, str>> = literal
-        .split('\n')
-        .map(|s| std::borrow::Cow::Owned(tm20_set::detab(s).into_owned()))
-        .collect();
-    if lines.last().is_some_and(|s| s.is_empty()) {
-        lines.pop();
-    }
-    Frame::Code(Code { size, lines })
+    Frame::Code(Code::new(size, literal))
 }
 
 fn flush_text(size: TextSize, spans: &mut Vec<Span<'static>>, frames: &mut Vec<Frame<'static>>) {

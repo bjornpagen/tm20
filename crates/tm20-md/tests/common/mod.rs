@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use tm20_set::{Cut, Face, FaceTable};
+use tm20_set::{Cut, DisplayCut, Face, FaceTable};
 
 pub const HELVETICA: &str = "/System/Library/Fonts/Helvetica.ttc";
 pub const MENLO: &str = "/System/Library/Fonts/Menlo.ttc";
@@ -28,12 +28,12 @@ pub fn table() -> FaceTable {
                         .expect("Helvetica Regular")
                         .text(),
                 );
-                table.set_display(Cut::Roman, face.display());
+                table.set_display(DisplayCut::Roman, face.display());
             }
             "Helvetica-Bold" => table.set_text(Cut::Bold, face.text()),
             "Helvetica-Oblique" => table.set_text(Cut::Italic, face.text()),
             "Helvetica-BoldOblique" => table.set_text(Cut::BoldItalic, face.text()),
-            "Helvetica-Light" => table.set_display(Cut::Light, face.display()),
+            "Helvetica-Light" => table.set_display(DisplayCut::Light, face.display()),
             _ => {}
         }
     }

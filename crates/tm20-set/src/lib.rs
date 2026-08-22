@@ -16,7 +16,7 @@ mod strike;
 
 pub use compose::compose;
 pub use error::Error;
-pub use face::{Cut, DisplayFace, Face, FaceTable, TextFace};
+pub use face::{Cut, DisplayCut, DisplayFace, Face, FaceTable, Kit, TextFace};
 pub use frame::{
     Code, ColAlign, ColBody, Cols, DecimalDelim, EN_DASH, Figure, Frame, Head, ItemBody, ItemMark,
     List, ListFit, ListItem, Mark, MarkAlign, Marker, Math, Measure, Note, Quote, Rule, RuleSpan,

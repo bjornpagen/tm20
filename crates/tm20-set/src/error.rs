@@ -2,13 +2,13 @@
 
 use std::fmt;
 
-use crate::face::Cut;
+use crate::face::{Cut, DisplayCut};
 
 #[derive(Debug)]
 pub enum Error {
     Font,
     MissingText(Cut),
-    MissingDisplay(Cut),
+    MissingDisplay(DisplayCut),
     Image,
     Nesting,
 }

@@ -1,10 +1,11 @@
 //! Small evaluator: [`Sheet`] + [`FaceTable`] → a tape-wide raster, packed as
-//! one or more [`tm20::Graphics`].
+//! one or more [`tm20::Graphics`]. The face check happens once, at the
+//! boundary: paint holds a [`Kit`] and never asks again.
 
 use std::num::NonZeroU32;
 
 use crate::error::Error;
-use crate::face::{Cut, DisplayFace, Face, FaceTable, Shaped, TextFace};
+use crate::face::{Cut, DisplayFace, Face, FaceTable, Kit, Shaped, TextFace};
 use crate::frame::{
     Code, ColAlign, ColBody, Cols, EN_DASH, Figure, Frame, Head, ItemBody, ItemMark, List, ListFit,
     ListItem, MarkAlign, Marker, Math, Note, Quote, Rule, RuleSpan, Sheet, TextBlock, Thickness,
@@ -17,6 +18,10 @@ use tm20::graphics::{Graphics, GraphicsScale, is_black, max_height, set_black, w
 const NEST_CAP: u8 = 3;
 const NOTE_RAISE_NUM: i32 = 2;
 const NOTE_RAISE_DEN: i32 = 5;
+
+/// Quote hang per depth: two modules for the first voice so it reads on
+/// 80 mm paper, one more per nest. Indexed by the depth the guard just checked.
+const QUOTE_HANG: [u16; NEST_CAP as usize] = [2 * GRID, GRID, GRID];
 
 /// Packed MSB-first raster. Same table as [`Graphics::pixels`]; paint writes
 /// the wire form. One buffer for the job, grown down the tape, sliced into bands.
@@ -246,6 +251,8 @@ impl Cursor {
         }
     }
 
+    /// Air raises the whole slug, not just the pen: a following rule reads
+    /// `slug_bottom`, a following line reads `baseline`; both must move.
     fn bump(&mut self, extra: u16) {
         if extra == 0 {
             return;
@@ -257,7 +264,7 @@ impl Cursor {
                 slug_bottom,
             } => Place::Line {
                 baseline: baseline + extra,
-                slug_bottom,
+                slug_bottom: slug_bottom + extra,
             },
             Place::Origin { floor, slug_bottom } => Place::Origin {
                 floor: floor + extra,
@@ -270,7 +277,10 @@ impl Cursor {
         };
     }
 
-    fn first_baseline(&mut self, ascent: f32, depth: f32, skip: u16) -> f32 {
+    /// Pen for the next line. [`Place`] is the boundary sentinel — Origin and
+    /// Rule are frame starts — so one method serves the first line and every
+    /// wrapped line after it. No caller counts lines.
+    fn baseline(&mut self, ascent: f32, depth: f32, skip: u16) -> f32 {
         let b = match self.place {
             Place::Rule { bottom } => bottom + HANG as f32 + ascent,
             Place::Origin { floor, .. } => floor + ascent,
@@ -283,23 +293,6 @@ impl Cursor {
             .slug_bottom()
             .max(b - ascent + skip as f32)
             .max(b + depth);
-        self.place = Place::Line {
-            baseline: b,
-            slug_bottom,
-        };
-        b
-    }
-
-    fn later_baseline(&mut self, ascent: f32, depth: f32, skip: u16) -> f32 {
-        let Place::Line {
-            baseline,
-            slug_bottom,
-        } = self.place
-        else {
-            unreachable!("wrapped lines follow the first");
-        };
-        let b = (baseline + skip as f32).max(slug_bottom + ascent);
-        let slug_bottom = slug_bottom.max(b - ascent + skip as f32).max(b + depth);
         self.place = Place::Line {
             baseline: b,
             slug_bottom,
@@ -328,11 +321,16 @@ fn rhythm(frame: &Frame<'_>) -> Rhythm {
 fn pair(from: Rhythm, to: Rhythm) -> Pair {
     use Rhythm::{Code, Cols, Head, Inner, List, Mark, Prose, Quote, Rule};
     match (from, to) {
-        (Mark, Mark | Rule) => Pair::Stick,
+        // A rule kisses the masthead it opens and the table it totals;
+        // everywhere else it takes one module of air on each side.
+        (Mark | Cols, Rule) => Pair::Stick,
+        (_, Rule) => Pair::Seam,
+        (Mark, Mark) => Pair::Stick,
         (Mark, _) => Pair::AfterMark,
-        (Head, Head | Mark) => Pair::Line,
+        (Head, Head) => Pair::Seam,
+        (Head, Mark) => Pair::Line,
         (Head, _) => Pair::Stick,
-        (Cols, Cols | Rule) => Pair::Stick,
+        (Cols, Cols) => Pair::Stick,
         (Cols, _) => Pair::Line,
         (_, Head) => Pair::Line,
         (Inner, Cols | Mark) => Pair::Line,
@@ -340,7 +338,6 @@ fn pair(from: Rhythm, to: Rhythm) -> Pair {
         (List | Quote | Code, List | Quote | Code) => Pair::Seam,
         (Quote | Code, Prose) => Pair::Seam,
         (Prose, Prose) => Pair::Line,
-        (_, Rule) => Pair::Stick,
         (_, Cols | Mark) => Pair::Line,
         (List, Prose) | (Prose, List | Quote | Code) => Pair::Stick,
         (Rule, _) => Pair::Line,
@@ -366,9 +363,11 @@ fn slug(frame: &Frame<'_>) -> u16 {
 fn extra(cur: &Cursor, to: Rhythm, next: u16) -> u16 {
     match cur.place {
         Place::Origin { .. } => 0,
+        // After a rule: a table hangs from it; everything else takes the
+        // same module of air the rule took above.
         Place::Rule { .. } => match to {
             Rhythm::Cols => 0,
-            _ => next,
+            _ => GRID,
         },
         Place::Line { .. } => {
             let Some(from) = cur.last else {
@@ -399,7 +398,7 @@ enum Pending<'a> {
 struct Cx<'a, 'f> {
     canvas: &'a mut Canvas,
     cur: &'a mut Cursor,
-    faces: &'f FaceTable,
+    faces: &'a Kit<'f>,
     pending: Vec<Pending<'f>>,
 }
 
@@ -414,6 +413,7 @@ pub(crate) fn compose_bands(sheet: &Sheet<'_>, faces: &FaceTable) -> Result<Vec<
 }
 
 fn paint(sheet: &Sheet<'_>, faces: &FaceTable) -> Result<Canvas, Error> {
+    let kit = faces.kit()?;
     let width = sheet.width.get();
     let mut canvas = Canvas::new(width);
     let mut cur = Cursor::new();
@@ -421,7 +421,7 @@ fn paint(sheet: &Sheet<'_>, faces: &FaceTable) -> Result<Canvas, Error> {
         let mut cx = Cx {
             canvas: &mut canvas,
             cur: &mut cur,
-            faces,
+            faces: &kit,
             pending: Vec::new(),
         };
         paint_seq(&mut cx, &sheet.frames, 0, width, 0, 0)?;
@@ -453,6 +453,7 @@ fn grid_seams_through(cx: &mut Cx<'_, '_>, top: u16, bottom: u16) {
     }
 }
 
+/// Nothing charges nothing: an empty sequence paints no ink and takes no slug.
 fn paint_seq(
     cx: &mut Cx<'_, '_>,
     frames: &[Frame<'_>],
@@ -461,11 +462,6 @@ fn paint_seq(
     quote_depth: u8,
     list_depth: u8,
 ) -> Result<(), Error> {
-    if frames.is_empty() {
-        let b = cx.cur.first_baseline(0.0, 0.0, GRID);
-        flush_marks(cx, b);
-        return Ok(());
-    }
     for frame in frames {
         let e = extra(cx.cur, rhythm(frame), slug(frame));
         cx.cur.bump(e);
@@ -516,8 +512,7 @@ fn paint_mark(
     x0: u16,
     measure: u16,
 ) -> Result<(), Error> {
-    let faces = cx.faces;
-    let face = faces.display(mark.cut)?;
+    let face = cx.faces.display(mark.cut)?;
     let skip = mark.size.skip_dots();
     let ppem = mark.size.ppem();
     let measure = to_frac(measure.max(1));
@@ -529,17 +524,11 @@ fn paint_mark(
         measure,
     );
     cx.cur.mark_slug = skip;
-    for (li, line) in lines.iter().enumerate() {
+    for line in &lines {
         let shaped = face.shape(line, mark.size, mark.tracking.0);
         let ascent = shaped_ink_ascent(face.inner(), ppem, &shaped);
-        let b = if li == 0 {
-            cx.cur.first_baseline(ascent, 0.0, skip)
-        } else {
-            cx.cur.later_baseline(ascent, 0.0, skip)
-        };
-        if li == 0 {
-            flush_marks(cx, b);
-        }
+        let b = cx.cur.baseline(ascent, 0.0, skip);
+        flush_marks(cx, b);
         let x = match mark.align {
             MarkAlign::Start => to_frac(x0),
             MarkAlign::Center => to_frac(x0) + (measure - shaped.width).max(0) / 2,
@@ -653,19 +642,22 @@ fn paint_run(
         to_frac(measure),
         cx.faces,
         Digits::Proportional,
-    )?;
-    for (li, line) in lines.iter().enumerate() {
+    );
+    let space = word_space(cx.faces, block.size);
+    for line in &lines {
         let (ascent, depth) = line_metrics(block.size, line, Digits::Proportional);
         let skip = line_skip(block.size, ascent, depth);
-        let b = if li == 0 {
-            cx.cur.first_baseline(ascent, depth, skip)
-        } else {
-            cx.cur.later_baseline(ascent, depth, skip)
-        };
-        if li == 0 {
-            flush_marks(cx, b);
-        }
-        paint_line(cx, block.size, to_frac(x0), b, line, Digits::Proportional)?;
+        let b = cx.cur.baseline(ascent, depth, skip);
+        flush_marks(cx, b);
+        paint_line(
+            cx,
+            block.size,
+            to_frac(x0),
+            b,
+            line,
+            Digits::Proportional,
+            space,
+        )?;
         if split {
             seam(cx);
         }
@@ -685,15 +677,15 @@ fn paint_quote(
         return Err(Error::Nesting);
     }
     cx.cur.last = Some(Rhythm::Inner);
-    let x = x0.saturating_add(GRID);
-    let w = measure.saturating_sub(GRID).max(1);
+    let hang = QUOTE_HANG[usize::from(quote_depth)];
+    let x = x0.saturating_add(hang);
+    let w = measure.saturating_sub(hang).max(1);
     paint_seq(cx, &quote.frames, x, w, quote_depth + 1, list_depth)
 }
 
 fn paint_code(cx: &mut Cx<'_, '_>, code: &Code<'_>, x0: u16, _measure: u16) -> Result<(), Error> {
     let x = to_frac(x0.saturating_add(GRID));
-    let faces = cx.faces;
-    let face = faces.text(Cut::Mono)?;
+    let face = cx.faces.text(Cut::Mono);
     let skip = code.size.skip_dots();
     let ppem = code.size.ppem();
     let empty = std::borrow::Cow::Borrowed("");
@@ -702,18 +694,11 @@ fn paint_code(cx: &mut Cx<'_, '_>, code: &Code<'_>, x0: u16, _measure: u16) -> R
     } else {
         code.lines.iter().collect()
     };
-    for (li, line) in lines.iter().enumerate() {
-        let line = crate::frame::detab(line.as_ref());
+    for line in lines {
         let shaped = face.shape(line.as_ref(), code.size);
         let ascent = shaped_ink_ascent(face.inner(), ppem, &shaped);
-        let b = if li == 0 {
-            cx.cur.first_baseline(ascent, 0.0, skip)
-        } else {
-            cx.cur.later_baseline(ascent, 0.0, skip)
-        };
-        if li == 0 {
-            flush_marks(cx, b);
-        }
+        let b = cx.cur.baseline(ascent, 0.0, skip);
+        flush_marks(cx, b);
         blit(cx.canvas, face.inner(), ppem, x, b, &shaped);
         seam(cx);
     }
@@ -721,7 +706,7 @@ fn paint_code(cx: &mut Cx<'_, '_>, code: &Code<'_>, x0: u16, _measure: u16) -> R
 }
 
 fn paint_figure(cx: &mut Cx<'_, '_>, fig: &Figure, x0: u16, measure: u16) -> Result<(), Error> {
-    let b = cx.cur.first_baseline(0.0, 0.0, GRID);
+    let b = cx.cur.baseline(0.0, 0.0, GRID);
     flush_marks(cx, b);
     let top = b.round().max(0.0) as u16;
     let w = fig.width.min(measure);
@@ -730,7 +715,7 @@ fn paint_figure(cx: &mut Cx<'_, '_>, fig: &Figure, x0: u16, measure: u16) -> Res
         cx.canvas, x as i32, top as i32, fig.width, fig.height, &fig.bits,
     );
     if let Some(n) = fig.note {
-        let nf = cx.faces.text(Cut::Roman)?;
+        let nf = cx.faces.text(Cut::Roman);
         let label = n.get().to_string();
         let shaped_note = nf.shape(&label, TextSize::Pt8);
         let ppem8 = TextSize::Pt8.ppem();
@@ -762,7 +747,7 @@ fn paint_figure(cx: &mut Cx<'_, '_>, fig: &Figure, x0: u16, measure: u16) -> Res
 /// Display box. One unbreakable token: shrink-to-measure at parse, clip here
 /// if still wider. No wrap — RaTeX is not a math-atom list we can break.
 fn paint_math(cx: &mut Cx<'_, '_>, math: &Math, x0: u16, measure: u16) -> Result<(), Error> {
-    let b = cx.cur.first_baseline(0.0, 0.0, GRID);
+    let b = cx.cur.baseline(0.0, 0.0, GRID);
     flush_marks(cx, b);
     let top = b.round().max(0.0) as u16;
     let w = math.width.min(measure);
@@ -819,12 +804,14 @@ fn paint_notes(cx: &mut Cx<'_, '_>, width: u16, notes: &[Note<'_>]) -> Result<()
         fit: ListFit::Tight,
         items: notes.iter().map(|_| ListItem::new(vec![])).collect(),
     };
-    let hang = hang_list.hang_dots(cx.faces)?;
-    let mark_w = hang_list.mark_width(cx.faces)?;
+    let face = cx.faces.text(Cut::Roman);
+    let hang = hang_list.hang_dots(face);
+    let mark_w = hang_list.mark_width(face);
     let content_x = hang;
     let content_w = width.saturating_sub(hang).max(1);
-    let face = cx.faces.text(Cut::Roman)?;
     let ppem = size.ppem();
+    let cap = face.shape("H", size);
+    let cap_ascent = shaped_ink_ascent(face.inner(), ppem, &cap);
     for (i, note) in notes.iter().enumerate() {
         let t = decimal_text(1 + i as u32, crate::frame::DecimalDelim::Period);
         let s = face.shape_figure(&t, size);
@@ -847,6 +834,12 @@ fn paint_notes(cx: &mut Cx<'_, '_>, width: u16, notes: &[Note<'_>]) -> Result<()
                     paint_seq(cx, &[frame], content_x, content_w, 0, 1)?;
                 }
             }
+            // An empty definition still owns its number and its slug;
+            // otherwise the queued mark would leak onto the next note.
+            Note::Blocks(frames) if frames.is_empty() => {
+                let b = cx.cur.baseline(cap_ascent, 0.0, size.skip_dots());
+                flush_marks(cx, b);
+            }
             Note::Blocks(frames) => {
                 paint_seq(cx, frames, content_x, content_w, 0, 1)?;
             }
@@ -866,12 +859,11 @@ fn paint_list(
     if list_depth >= NEST_CAP {
         return Err(Error::Nesting);
     }
-    let faces = cx.faces;
-    let hang = list.hang_dots(faces)?;
-    let mark_w = list.mark_width(faces)?;
+    let face = cx.faces.text(list.cut);
+    let hang = list.hang_dots(face);
+    let mark_w = list.mark_width(face);
     let content_x = x0.saturating_add(hang);
     let content_w = measure.saturating_sub(hang).max(1);
-    let face = faces.text(list.cut)?;
     let ppem = list.size.ppem();
     let cap = face.shape("H", list.size);
     let ascent = shaped_ink_ascent(face.inner(), ppem, &cap);
@@ -909,7 +901,7 @@ fn paint_list(
         match &item.body {
             ItemBody::Blank => {
                 let skip = list.size.skip_dots();
-                let b = cx.cur.first_baseline(ascent, 0.0, skip);
+                let b = cx.cur.baseline(ascent, 0.0, skip);
                 flush_marks(cx, b);
             }
             ItemBody::Frames(frames) => {
@@ -949,16 +941,15 @@ fn paint_grid<const N: usize>(
     measure: u16,
 ) -> Result<(), Error> {
     if rows.is_empty() {
-        let b = cx.cur.first_baseline(0.0, 0.0, size.skip_dots());
-        flush_marks(cx, b);
         return Ok(());
     }
     let gutter = gutter.dots();
-    let natural = measure_cols(size, align, rows, cx.faces)?;
+    let natural = measure_cols(size, align, rows, cx.faces);
     let placed = crate::cols::layout(natural, x0, measure, gutter, |w| {
         allocation_cost(size, align, rows, cx.faces, w)
-    })?;
-    for (ri, row) in rows.iter().enumerate() {
+    });
+    let space = word_space(cx.faces, size);
+    for row in rows {
         let mut cell_lines = Vec::with_capacity(N);
         for (cell, spans) in placed.col.iter().zip(row.iter()) {
             cell_lines.push(wrap_spans(
@@ -967,7 +958,7 @@ fn paint_grid<const N: usize>(
                 to_frac(cell.width),
                 cx.faces,
                 col_digits(cell.align),
-            )?);
+            ));
         }
         let nlines = cell_lines.iter().map(|l| l.len().max(1)).max().unwrap_or(1);
         for li in 0..nlines {
@@ -981,21 +972,15 @@ fn paint_grid<const N: usize>(
                 }
             }
             let skip = line_skip(size, ascent, depth);
-            let b = if ri == 0 && li == 0 {
-                cx.cur.first_baseline(ascent, depth, skip)
-            } else {
-                cx.cur.later_baseline(ascent, depth, skip)
-            };
-            if ri == 0 && li == 0 {
-                flush_marks(cx, b);
-            }
+            let b = cx.cur.baseline(ascent, depth, skip);
+            flush_marks(cx, b);
             for (cell, lines) in placed.col.iter().zip(&cell_lines) {
                 if let Some(line) = lines.get(li) {
                     let digits = col_digits(cell.align);
-                    let notes = note_face_of(cx.faces, line)?;
-                    let lw = line_width(size, line, digits, notes);
+                    let notes = note_face_of(cx.faces, line);
+                    let lw = line_width(size, line, digits, notes, space);
                     let old = cx.canvas.push_clip(cell.origin, cell.end());
-                    let painted = paint_line(cx, size, cell.ink_x(lw), b, line, digits);
+                    let painted = paint_line(cx, size, cell.ink_x(lw), b, line, digits, space);
                     cx.canvas.pop_clip(old);
                     painted?;
                 }
@@ -1010,8 +995,8 @@ fn measure_cols<const N: usize>(
     size: TextSize,
     align: &[ColAlign; N],
     rows: &[[Vec<crate::frame::Span<'_>>; N]],
-    faces: &FaceTable,
-) -> Result<crate::cols::Natural<N>, Error> {
+    faces: &Kit<'_>,
+) -> crate::cols::Natural<N> {
     let mut pref = [1u16; N];
     let mut min = [1u16; N];
     for c in 0..N {
@@ -1019,19 +1004,19 @@ fn measure_cols<const N: usize>(
         let mut p = 1u16;
         let mut m = 1u16;
         for row in rows {
-            let (unwrapped, _) = wrap_plan(size, &row[c], to_frac(10_000), faces, digits)?;
-            p = p.max(max_line_width(size, &unwrapped, faces, digits)?);
-            let (tight, _) = wrap_plan(size, &row[c], to_frac(1), faces, digits)?;
-            m = m.max(max_line_width(size, &tight, faces, digits)?);
+            let (unwrapped, _) = wrap_plan(size, &row[c], to_frac(10_000), faces, digits);
+            p = p.max(max_line_width(size, &unwrapped, faces, digits));
+            let (tight, _) = wrap_plan(size, &row[c], to_frac(1), faces, digits);
+            m = m.max(max_line_width(size, &tight, faces, digits));
         }
         pref[c] = p.max(1);
         min[c] = m.min(pref[c]).max(1);
     }
-    Ok(crate::cols::Natural {
+    crate::cols::Natural {
         align: *align,
         pref,
         min,
-    })
+    }
 }
 
 fn col_digits(align: ColAlign) -> Digits {
@@ -1041,44 +1026,40 @@ fn col_digits(align: ColAlign) -> Digits {
     }
 }
 
-fn max_line_width(
-    size: TextSize,
-    lines: &[Line<'_>],
-    faces: &FaceTable,
-    digits: Digits,
-) -> Result<u16, Error> {
+fn max_line_width(size: TextSize, lines: &[Line<'_>], faces: &Kit<'_>, digits: Digits) -> u16 {
+    let space = word_space(faces, size);
     let mut w = 1u16;
     for line in lines {
-        let notes = note_face_of(faces, line)?;
-        w = w.max(ceil_dots(line_width(size, line, digits, notes)).max(1));
+        let notes = note_face_of(faces, line);
+        w = w.max(ceil_dots(line_width(size, line, digits, notes, space)).max(1));
     }
-    Ok(w)
+    w
 }
 
 fn allocation_cost<const N: usize>(
     size: TextSize,
     align: &[ColAlign; N],
     rows: &[[Vec<crate::frame::Span<'_>>; N]],
-    faces: &FaceTable,
+    faces: &Kit<'_>,
     widths: &[u16; N],
-) -> Result<f64, Error> {
+) -> f64 {
     let mut total = 0.0;
     for (c, w) in widths.iter().enumerate() {
         let digits = col_digits(align[c]);
         for row in rows {
-            let (_, cost) = wrap_plan(size, &row[c], to_frac(*w), faces, digits)?;
+            let (_, cost) = wrap_plan(size, &row[c], to_frac(*w), faces, digits);
             total += cost;
         }
     }
-    Ok(total)
+    total
 }
 
-fn note_face_of<'f>(faces: &'f FaceTable, line: &Line<'_>) -> Result<Option<&'f TextFace>, Error> {
+fn note_face_of<'f>(faces: &Kit<'f>, line: &Line<'_>) -> Option<&'f TextFace> {
     match line {
         Line::Ink(ink) if ink.pieces().any(|p| matches!(p, Piece::Note(_))) => {
-            Ok(Some(faces.text(Cut::Roman)?))
+            Some(faces.text(Cut::Roman))
         }
-        _ => Ok(None),
+        _ => None,
     }
 }
 
@@ -1170,11 +1151,13 @@ enum Digits {
     Tabular,
 }
 
-/// Adjacency. A word-space is a variant; `i > 0` cannot invent one.
+/// Adjacency. A word-space is a variant; `i > 0` cannot invent one. A legal
+/// zero-width break inside a token is a variant too, not a scan in the wrap.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Glue {
     None,
     Space,
+    Break,
     ItalicCorrect,
 }
 
@@ -1209,15 +1192,6 @@ enum Piece<'a> {
     Math(&'a Math),
 }
 
-impl<'a> Piece<'a> {
-    fn face(self) -> Option<&'a TextFace> {
-        match self {
-            Piece::Type { face, .. } => Some(face),
-            Piece::Note(_) | Piece::Math(_) => None,
-        }
-    }
-}
-
 /// Non-empty ink. Glue lives between pieces so a leading space is not a box.
 #[derive(Clone)]
 struct InkLine<'a> {
@@ -1234,10 +1208,6 @@ impl<'a> InkLine<'a> {
     fn pieces(&self) -> impl Iterator<Item = Piece<'a>> + '_ {
         std::iter::once(self.first).chain(self.rest.iter().map(|(_, p)| *p))
     }
-
-    fn last(&self) -> Piece<'a> {
-        self.rest.last().map_or(self.first, |(_, p)| *p)
-    }
 }
 
 fn paint_line(
@@ -1247,21 +1217,21 @@ fn paint_line(
     baseline: f32,
     line: &Line<'_>,
     digits: Digits,
+    space: i32,
 ) -> Result<(), Error> {
     let Line::Ink(line) = line else {
         return Ok(());
     };
-    let note_face = if line.pieces().any(|p| matches!(p, Piece::Note(_))) {
-        Some(cx.faces.text(Cut::Roman)?)
-    } else {
-        None
-    };
+    let note_face = line
+        .pieces()
+        .any(|p| matches!(p, Piece::Note(_)))
+        .then(|| cx.faces.text(Cut::Roman));
     let mut x = x0;
     let mut prev = line.first;
     paint_piece(cx, size, x, baseline, prev, digits, note_face)?;
     x += piece_width(size, prev, digits, note_face);
     for &(glue, piece) in &line.rest {
-        x += glue_width(size, glue, prev, piece, digits);
+        x += glue_width(size, glue, prev, piece, digits, space);
         paint_piece(cx, size, x, baseline, piece, digits, note_face)?;
         x += piece_width(size, piece, digits, note_face);
         prev = piece;
@@ -1367,10 +1337,10 @@ fn wrap_spans<'f>(
     size: TextSize,
     spans: &'f [crate::frame::Span<'_>],
     measure: i32,
-    faces: &'f FaceTable,
+    faces: &Kit<'f>,
     digits: Digits,
-) -> Result<Vec<Line<'f>>, Error> {
-    Ok(wrap_plan(size, spans, measure, faces, digits)?.0)
+) -> Vec<Line<'f>> {
+    wrap_plan(size, spans, measure, faces, digits).0
 }
 
 enum After {
@@ -1428,17 +1398,14 @@ fn wrap_plan<'f>(
     size: TextSize,
     spans: &'f [crate::frame::Span<'_>],
     measure: i32,
-    faces: &'f FaceTable,
+    faces: &Kit<'f>,
     digits: Digits,
-) -> Result<(Vec<Line<'f>>, f64), Error> {
-    let note_face = if spans
+) -> (Vec<Line<'f>>, f64) {
+    let note_face = spans
         .iter()
         .any(|s| matches!(s, crate::frame::Span::Type { note: Some(_), .. }))
-    {
-        Some(faces.text(Cut::Roman)?)
-    } else {
-        None
-    };
+        .then(|| faces.text(Cut::Roman));
+    let space = word_space(faces, size);
     let mut seq = Seq::new();
     let mut chunks = Vec::new();
     for span in spans {
@@ -1447,7 +1414,7 @@ fn wrap_plan<'f>(
                 seq.push(Piece::Math(math), Stance::Upright);
             }
             crate::frame::Span::Type { cut, text, note } => {
-                let face = faces.text(*cut)?;
+                let face = faces.text(*cut);
                 let voice = stance(*cut);
                 let hards: Vec<&str> = text.split('\n').collect();
                 for (hi, hard) in hards.iter().enumerate() {
@@ -1496,8 +1463,8 @@ fn wrap_plan<'f>(
         match chunk {
             Line::Blank => out.push(Line::Blank),
             Line::Ink(ink) => {
-                let words = split_words(ink);
-                let (lines, chunk_cost) = wrap_words(size, &words, measure, digits, note_face);
+                let words = split_words(ink, size, digits, note_face, measure, space);
+                let (lines, chunk_cost) = wrap_words(size, &words, measure, digits, note_face, space);
                 cost += chunk_cost;
                 cost += 1_000_000_000.0 * lines.len().saturating_sub(1) as f64;
                 out.extend(lines);
@@ -1507,11 +1474,39 @@ fn wrap_plan<'f>(
     if out.is_empty() {
         out.push(Line::Blank);
     }
-    Ok((out, cost))
+    (out, cost)
 }
 
-fn split_words(line: InkLine<'_>) -> Vec<InkLine<'_>> {
-    let mut words = Vec::new();
+/// Space-delimited word units plus the glue at each boundary. A Break join
+/// comes from exploding an overwide token; it costs no width on a line.
+struct Words<'f> {
+    items: Vec<InkLine<'f>>,
+    joins: Vec<Glue>,
+}
+
+fn split_words<'f>(
+    line: InkLine<'f>,
+    size: TextSize,
+    digits: Digits,
+    note_face: Option<&TextFace>,
+    measure: i32,
+    space: i32,
+) -> Words<'f> {
+    let mut words = Words {
+        items: Vec::new(),
+        joins: Vec::new(),
+    };
+    let take = |words: &mut Words<'f>, word: InkLine<'f>| {
+        for (fi, frag) in explode(word, size, digits, note_face, measure, space)
+            .into_iter()
+            .enumerate()
+        {
+            if !words.items.is_empty() {
+                words.joins.push(if fi == 0 { Glue::Space } else { Glue::Break });
+            }
+            words.items.push(frag);
+        }
+    };
     let mut cur = InkLine {
         first: line.first,
         rest: Vec::new(),
@@ -1519,51 +1514,120 @@ fn split_words(line: InkLine<'_>) -> Vec<InkLine<'_>> {
     for (glue, piece) in line.rest {
         match glue {
             Glue::Space => {
-                words.push(cur);
+                take(&mut words, cur);
                 cur = InkLine {
                     first: piece,
                     rest: Vec::new(),
                 };
             }
-            Glue::None | Glue::ItalicCorrect => cur.rest.push((glue, piece)),
+            Glue::None | Glue::Break | Glue::ItalicCorrect => cur.rest.push((glue, piece)),
         }
     }
-    words.push(cur);
+    take(&mut words, cur);
     words
 }
 
-fn join_words<'a>(words: &[InkLine<'a>]) -> InkLine<'a> {
-    let mut line = words[0].clone();
-    for w in &words[1..] {
-        line.rest.push((Glue::Space, w.first));
-        line.rest.extend(w.rest.iter().copied());
+/// Break opportunities inside one token, after URI punctuation. A token with
+/// no punctuation is one fragment and still clips — honest loss beats a
+/// hyphen the source never wrote.
+const BREAK_AFTER: [char; 12] = ['/', '?', '&', '=', '#', '-', '_', '.', ',', ';', ':', '@'];
+
+fn frags(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for (i, c) in text.char_indices() {
+        if BREAK_AFTER.contains(&c) {
+            let end = i + c.len_utf8();
+            out.push(&text[start..end]);
+            start = end;
+        }
+    }
+    if start < text.len() {
+        out.push(&text[start..]);
+    }
+    if out.is_empty() {
+        out.push(text);
+    }
+    out
+}
+
+/// One token wider than the measure splits at its break opportunities; a
+/// fitting token never shapes in pieces, so kerning inside it is untouched.
+fn explode<'f>(
+    word: InkLine<'f>,
+    size: TextSize,
+    digits: Digits,
+    note_face: Option<&TextFace>,
+    measure: i32,
+    space: i32,
+) -> Vec<InkLine<'f>> {
+    if ink_width(size, &word, digits, note_face, space) <= measure {
+        return vec![word];
+    }
+    let InkLine { first, rest } = word;
+    let mut out: Vec<InkLine<'f>> = Vec::new();
+    let mut cur: Option<InkLine<'f>> = None;
+    for (glue, piece) in std::iter::once((Glue::None, first)).chain(rest) {
+        let pieces: Vec<Piece<'f>> = match piece {
+            Piece::Type { face, text } => frags(text)
+                .into_iter()
+                .map(|t| Piece::Type { face, text: t })
+                .collect(),
+            other => vec![other],
+        };
+        for (fi, p) in pieces.into_iter().enumerate() {
+            match (&mut cur, fi) {
+                (None, _) => cur = Some(InkLine {
+                    first: p,
+                    rest: Vec::new(),
+                }),
+                (Some(line), 0) => line.rest.push((glue, p)),
+                (Some(_), _) => {
+                    out.push(cur.take().expect("cur set"));
+                    cur = Some(InkLine {
+                        first: p,
+                        rest: Vec::new(),
+                    });
+                }
+            }
+        }
+    }
+    out.extend(cur);
+    out
+}
+
+fn join_words<'a>(words: &Words<'a>, i: usize, j: usize) -> InkLine<'a> {
+    let mut line = words.items[i].clone();
+    for k in i + 1..j {
+        line.rest.push((words.joins[k - 1], words.items[k].first));
+        line.rest.extend(words.items[k].rest.iter().copied());
     }
     line
 }
 
 fn wrap_words<'f>(
     size: TextSize,
-    words: &[InkLine<'f>],
+    words: &Words<'f>,
     measure: i32,
     digits: Digits,
     note_face: Option<&TextFace>,
+    space: i32,
 ) -> (Vec<Line<'f>>, f64) {
-    let n = words.len();
+    let n = words.items.len();
     if n == 0 {
         return (vec![Line::Blank], 0.0);
     }
     let mut ink = vec![0i32; n + 1];
-    let mut space = vec![0i32; n];
     for i in 0..n {
-        ink[i + 1] = ink[i] + ink_width(size, &words[i], digits, note_face);
-        space[i] = words[i]
-            .last()
-            .face()
-            .map_or(0, |face| face.shape(" ", size).width);
+        ink[i + 1] = ink[i] + ink_width(size, &words.items[i], digits, note_face, space);
     }
-    let width = |i: usize, j: usize| {
-        ink[j] - ink[i] + space[i..j.saturating_sub(1)].iter().sum::<i32>()
-    };
+    let mut gsum = vec![0i32; n];
+    for i in 0..n.saturating_sub(1) {
+        let gap = if words.joins[i] == Glue::Space { space } else { 0 };
+        gsum[i + 1] = gsum[i] + gap;
+    }
+    let width =
+        |i: usize, j: usize| ink[j] - ink[i] + gsum[j.saturating_sub(1)] - gsum[i];
     let mut dp = vec![f64::INFINITY; n + 1];
     let mut prev = vec![0usize; n + 1];
     dp[0] = 0.0;
@@ -1598,7 +1662,7 @@ fn wrap_words<'f>(
     ends.reverse();
     let lines = ends
         .into_iter()
-        .map(|(i, j)| Line::Ink(join_words(&words[i..j])))
+        .map(|(i, j)| Line::Ink(join_words(words, i, j)))
         .collect();
     let cost = if dp[n].is_finite() { dp[n] } else { 0.0 };
     (lines, cost)
@@ -1613,8 +1677,16 @@ fn piece_width(
     match piece {
         Piece::Math(math) => to_frac(math.width),
         Piece::Type { face, text } => shape_text(size, face, text, digits).width,
-        Piece::Note(n) => note_face.map_or(0, |nf| nf.shape(&n.get().to_string(), TextSize::Pt8).width),
+        Piece::Note(n) => {
+            note_face.map_or(0, |nf| nf.shape(&n.get().to_string(), TextSize::Pt8).width)
+        }
     }
+}
+
+/// Roman word space at this size. A `Glue::Space` is this width even when
+/// the previous box is math (which has no face).
+fn word_space(faces: &Kit<'_>, size: TextSize) -> i32 {
+    faces.text(Cut::Roman).shape(" ", size).width
 }
 
 fn glue_width(
@@ -1623,12 +1695,11 @@ fn glue_width(
     prev: Piece<'_>,
     next: Piece<'_>,
     digits: Digits,
+    space: i32,
 ) -> i32 {
     match glue {
-        Glue::None => 0,
-        Glue::Space => prev
-            .face()
-            .map_or(0, |face| face.shape(" ", size).width),
+        Glue::None | Glue::Break => 0,
+        Glue::Space => space,
         Glue::ItalicCorrect => italic_correct(size, prev, next, digits),
     }
 }
@@ -1640,9 +1711,7 @@ fn italic_correct(size: TextSize, prev: Piece<'_>, next: Piece<'_>, digits: Digi
     let shaped = shape_text(size, face, text, digits);
     let over = shaped_overhang(face.inner(), size.ppem(), &shaped);
     let raise = match next {
-        Piece::Note(_) => {
-            f32::from(size.ppem()) * NOTE_RAISE_NUM as f32 / NOTE_RAISE_DEN as f32
-        }
+        Piece::Note(_) => f32::from(size.ppem()) * NOTE_RAISE_NUM as f32 / NOTE_RAISE_DEN as f32,
         _ => 0.0,
     };
     let geo = (face.inner().italic_tan() * raise * FRAC as f32).round() as i32;
@@ -1667,11 +1736,12 @@ fn ink_width(
     line: &InkLine<'_>,
     digits: Digits,
     note_face: Option<&TextFace>,
+    space: i32,
 ) -> i32 {
     let mut w = piece_width(size, line.first, digits, note_face);
     let mut prev = line.first;
     for &(glue, piece) in &line.rest {
-        w += glue_width(size, glue, prev, piece, digits);
+        w += glue_width(size, glue, prev, piece, digits, space);
         w += piece_width(size, piece, digits, note_face);
         prev = piece;
     }
@@ -1683,10 +1753,11 @@ fn line_width(
     line: &Line<'_>,
     digits: Digits,
     note_face: Option<&TextFace>,
+    space: i32,
 ) -> i32 {
     match line {
         Line::Blank => 0,
-        Line::Ink(ink) => ink_width(size, ink, digits, note_face),
+        Line::Ink(ink) => ink_width(size, ink, digits, note_face, space),
     }
 }
 
@@ -1756,7 +1827,7 @@ mod pack_tests {
 
 #[cfg(test)]
 mod glue_tests {
-    use super::{join_glue, shaped_overhang, Glue, Stance, FRAC};
+    use super::{frags, join_glue, shaped_overhang, Glue, Stance, FRAC};
     use crate::face::{Cut, Face, FaceTable};
     use crate::size::TextSize;
     use std::sync::Arc;
@@ -1797,6 +1868,27 @@ mod glue_tests {
     }
 
     #[test]
+    fn rules_and_stacked_heads_breathe_one_module() {
+        use super::{pair, Pair, Rhythm};
+        assert_eq!(pair(Rhythm::Prose, Rhythm::Rule), Pair::Seam);
+        assert_eq!(pair(Rhythm::Head, Rhythm::Rule), Pair::Seam);
+        assert_eq!(pair(Rhythm::List, Rhythm::Rule), Pair::Seam);
+        assert_eq!(pair(Rhythm::Mark, Rhythm::Rule), Pair::Stick);
+        assert_eq!(pair(Rhythm::Cols, Rhythm::Rule), Pair::Stick);
+        assert_eq!(pair(Rhythm::Head, Rhythm::Head), Pair::Seam);
+        assert_eq!(pair(Rhythm::Head, Rhythm::Prose), Pair::Stick);
+    }
+
+    #[test]
+    fn uri_tokens_fragment_after_punctuation() {
+        assert_eq!(frags("a/b/c"), ["a/", "b/", "c"]);
+        assert_eq!(frags("x?y=1&z=2"), ["x?", "y=", "1&", "z=", "2"]);
+        assert_eq!(frags("plainword"), ["plainword"]);
+        assert_eq!(frags("end."), ["end."]);
+        assert_eq!(frags("a//"), ["a/", "/"]);
+    }
+
+    #[test]
     fn slant_then_upright_is_italic_correct_not_a_space() {
         assert_eq!(
             join_glue(Stance::Slant, Stance::Upright),
@@ -1828,11 +1920,7 @@ mod glue_tests {
             "Helvetica BoldOblique slant"
         );
         let size = TextSize::Pt11;
-        let geo = italic.inner().italic_tan()
-            * f32::from(size.ppem())
-            * 2.0
-            / 5.0
-            * FRAC as f32;
+        let geo = italic.inner().italic_tan() * f32::from(size.ppem()) * 2.0 / 5.0 * FRAC as f32;
         assert!(geo > 0.0, "raised-note clearance is positive");
     }
 }

@@ -5,10 +5,13 @@ mod common;
 use tm20::PRINTABLE_DOTS;
 use tm20::graphics::{Graphics, width_bytes};
 use tm20_set::{
-    Code, ColAlign, Cols, Cut, DisplaySize, Figure, Frame, GRID, GridSkip, HANG, Head, List,
+    Code, ColAlign, Cols, Cut, DisplayCut, DisplaySize, Figure, Frame, GRID, GridSkip, HANG, Head,
+    List,
     ListFit, ListItem, Mark, MarkAlign, Math, NOTE_RULE, Note, Quote, Rule, Sheet, Span, TASK_BOX,
     TextBlock, TextSize, Thickness, Tracking, compose, preview_png, pt_dots,
 };
+
+use std::num::NonZeroU32;
 
 fn l11() -> u16 {
     TextSize::Pt11.skip_dots()
@@ -127,7 +130,7 @@ fn closed_sizes_compose() {
     for size in [DisplaySize::Pt14, DisplaySize::Pt18, DisplaySize::Pt24] {
         compose(
             &Sheet::tape(vec![Frame::Mark(Mark {
-                cut: Cut::Roman,
+                cut: DisplayCut::Roman,
                 size,
                 text: "H".into(),
                 align: MarkAlign::Start,
@@ -281,7 +284,7 @@ fn mark_then_text_has_more_air_than_head_then_text() {
     let after_mark = compose(
         &Sheet::tape(vec![
             Frame::Mark(Mark {
-                cut: Cut::Roman,
+                cut: DisplayCut::Roman,
                 size: DisplaySize::Pt18,
                 text: "H".into(),
                 align: MarkAlign::Start,
@@ -305,7 +308,7 @@ fn mark_center_is_not_start() {
     let faces = common::table();
     let start = compose(
         &Sheet::tape(vec![Frame::Mark(Mark {
-            cut: Cut::Roman,
+            cut: DisplayCut::Roman,
             size: DisplaySize::Pt18,
             text: "H".into(),
             align: MarkAlign::Start,
@@ -316,7 +319,7 @@ fn mark_center_is_not_start() {
     .unwrap();
     let center = compose(
         &Sheet::tape(vec![Frame::Mark(Mark {
-            cut: Cut::Roman,
+            cut: DisplayCut::Roman,
             size: DisplaySize::Pt18,
             text: "H".into(),
             align: MarkAlign::Center,
@@ -333,7 +336,7 @@ fn mark_tracking_widens() {
     let faces = common::table();
     let tight = compose(
         &Sheet::tape(vec![Frame::Mark(Mark {
-            cut: Cut::Roman,
+            cut: DisplayCut::Roman,
             size: DisplaySize::Pt18,
             text: "MM".into(),
             align: MarkAlign::Start,
@@ -344,7 +347,7 @@ fn mark_tracking_widens() {
     .unwrap();
     let tracked = compose(
         &Sheet::tape(vec![Frame::Mark(Mark {
-            cut: Cut::Roman,
+            cut: DisplayCut::Roman,
             size: DisplaySize::Pt18,
             text: "MM".into(),
             align: MarkAlign::Start,
@@ -363,7 +366,7 @@ fn mark_wider_than_the_measure_wraps() {
     let faces = common::table();
     let one = compose(
         &Sheet::tape(vec![Frame::Mark(Mark {
-            cut: Cut::Roman,
+            cut: DisplayCut::Roman,
             size: DisplaySize::Pt18,
             text: "H".into(),
             align: MarkAlign::Start,
@@ -374,7 +377,7 @@ fn mark_wider_than_the_measure_wraps() {
     .unwrap();
     let wrapped = compose(
         &Sheet::tape(vec![Frame::Mark(Mark {
-            cut: Cut::Roman,
+            cut: DisplayCut::Roman,
             size: DisplaySize::Pt18,
             text: "Functional geometric algebra".into(),
             align: MarkAlign::Start,
@@ -487,7 +490,7 @@ fn cols_hangs_from_rule() {
 }
 
 #[test]
-fn text_does_not_hang_from_a_section_rule() {
+fn text_after_a_rule_takes_grid_air() {
     let faces = common::table();
     let g = compose(
         &Sheet::tape(vec![
@@ -499,8 +502,8 @@ fn text_does_not_hang_from_a_section_rule() {
     .unwrap();
     let gap = first_ink_after(&g, 2) - 2;
     assert!(
-        gap >= l11() as usize - 4,
-        "gap {gap} should be a line of the text, not hang ({HANG})"
+        gap >= GRID as usize - 1 && gap < l11() as usize,
+        "gap {gap}: one module of air, not the hang ({HANG}) and not a full slug"
     );
 }
 
@@ -851,7 +854,7 @@ fn list_runover_clears_the_mark_column() {
     let list = common::dash_list(vec![common::item(
         "Hello Hello Hello Hello Hello Hello Hello Hello Hello Hello Hello Hello",
     )]);
-    let hang = list.hang_dots(&faces).unwrap();
+    let hang = list.hang_dots(faces.text(Cut::Roman).unwrap());
     assert_eq!(hang % GRID, 0);
     assert!(hang >= GRID);
     let g = compose(&Sheet::tape(vec![Frame::List(list)]), &faces).unwrap();
@@ -889,15 +892,14 @@ fn decimal_hang_fits_the_widest_marker() {
     let faces = common::table();
     let dash = common::dash_list(vec![common::item("H"), common::item("H")]);
     let decimal = common::decimal_list(10, vec![common::item("H"), common::item("H")]);
-    let dash_h = dash.hang_dots(&faces).unwrap();
-    let dec_h = decimal.hang_dots(&faces).unwrap();
+    let dash_h = dash.hang_dots(faces.text(Cut::Roman).unwrap());
+    let dec_h = decimal.hang_dots(faces.text(Cut::Roman).unwrap());
     assert_eq!(dec_h % GRID, 0);
     assert!(dec_h >= dash_h);
     assert_eq!(
         dash_h,
         common::decimal_list(1, vec![common::item("H")])
-            .hang_dots(&faces)
-            .unwrap(),
+            .hang_dots(faces.text(Cut::Roman).unwrap()),
         "dash and one-digit decimal share a closed hang"
     );
     let g = compose(&Sheet::tape(vec![Frame::List(decimal)]), &faces).unwrap();
@@ -916,7 +918,7 @@ fn decimal_sits_in_the_mark_band() {
     let one = common::decimal_list(1, vec![common::item("H")]);
     let ten = common::decimal_list(10, vec![common::item("H")]);
     let task = common::dash_list(vec![ListItem::task(false, common::plain("H"))]);
-    let hang = one.hang_dots(&faces).unwrap();
+    let hang = one.hang_dots(faces.text(Cut::Roman).unwrap());
     let rightmost = |list: List<'_>| {
         let g = compose(&Sheet::tape(vec![Frame::List(list)]), &faces).unwrap();
         let mut x1 = 0u16;
@@ -1055,7 +1057,7 @@ fn loose_item_two_paras_still_taller() {
 fn task_box_hangs_on_the_grid() {
     let faces = common::table();
     let list = common::dash_list(vec![ListItem::task(false, common::plain("H"))]);
-    let hang = list.hang_dots(&faces).unwrap();
+    let hang = list.hang_dots(faces.text(Cut::Roman).unwrap());
     assert_eq!(hang % GRID, 0);
     assert!(hang >= TASK_BOX);
 }
@@ -1315,6 +1317,43 @@ fn inline_math_slug_follows_the_ink() {
 }
 
 #[test]
+fn word_space_after_math_is_a_word_space() {
+    let faces = common::table();
+    let bits = vec![true; 8 * 8];
+    let math = Math::from_bits(8, 8, &bits, 6).unwrap();
+    let jammed = compose(
+        &Sheet::tape(vec![Frame::Text(TextBlock {
+            size: TextSize::Pt11,
+            spans: vec![
+                Span::new(Cut::Roman, "x"),
+                Span::math(math.clone()),
+                Span::new(Cut::Roman, "y"),
+            ],
+        })]),
+        &faces,
+    )
+    .unwrap();
+    let spaced = compose(
+        &Sheet::tape(vec![Frame::Text(TextBlock {
+            size: TextSize::Pt11,
+            spans: vec![
+                Span::new(Cut::Roman, "x "),
+                Span::math(math),
+                Span::new(Cut::Roman, " y"),
+            ],
+        })]),
+        &faces,
+    )
+    .unwrap();
+    let (_, jam_r, ..) = ink_bbox(&jammed);
+    let (_, space_r, ..) = ink_bbox(&spaced);
+    assert!(
+        space_r >= jam_r + GRID,
+        "a word space after math cannot collapse; jammed {jam_r} spaced {space_r}"
+    );
+}
+
+#[test]
 fn narrow_display_math_is_centered() {
     let faces = common::table();
     let bits = vec![true; 8 * 8];
@@ -1329,7 +1368,7 @@ fn narrow_display_math_is_centered() {
 }
 
 #[test]
-fn quote_hangs_by_the_grid() {
+fn quote_first_voice_hangs_two_modules() {
     let faces = common::table();
     let plain = compose(&Sheet::tape(vec![text("H")]), &faces).unwrap();
     let quoted = compose(
@@ -1339,8 +1378,19 @@ fn quote_hangs_by_the_grid() {
         &faces,
     )
     .unwrap();
+    let nested = compose(
+        &Sheet::tape(vec![Frame::Quote(Quote {
+            frames: vec![Frame::Quote(Quote {
+                frames: common::plain("H"),
+            })],
+        })]),
+        &faces,
+    )
+    .unwrap();
     let shift = leftmost_ink(&quoted) as i32 - leftmost_ink(&plain) as i32;
-    assert_eq!(shift, GRID as i32);
+    let step = leftmost_ink(&nested) as i32 - leftmost_ink(&quoted) as i32;
+    assert_eq!(shift, 2 * GRID as i32, "first voice is two modules");
+    assert_eq!(step, GRID as i32, "each nest adds one");
 }
 
 #[test]
@@ -1645,7 +1695,7 @@ fn dump_preview_pngs() {
         (
             "lilt-18",
             Sheet::tape(vec![Frame::Mark(Mark {
-                cut: Cut::Roman,
+                cut: DisplayCut::Roman,
                 size: DisplaySize::Pt18,
                 text: lilt.into(),
                 align: MarkAlign::Start,
@@ -1661,8 +1711,8 @@ fn dump_preview_pngs() {
 }
 
 #[test]
-fn missing_cut_is_an_error() {
-    let faces = tm20_set::FaceTable::new();
+fn missing_cut_is_an_error_at_the_boundary() {
+    let faces = common::partial_table(false, true, true);
     let err = compose(
         &Sheet::tape(vec![Frame::Head(Head {
             size: TextSize::Pt11,
@@ -1676,7 +1726,7 @@ fn missing_cut_is_an_error() {
 
 #[test]
 fn code_needs_mono() {
-    let faces = tm20_set::FaceTable::new();
+    let faces = common::partial_table(true, false, true);
     let err = compose(
         &Sheet::tape(vec![Frame::Code(Code {
             size: TextSize::Pt11,
@@ -1690,10 +1740,10 @@ fn code_needs_mono() {
 
 #[test]
 fn missing_display_is_an_error() {
-    let faces = tm20_set::FaceTable::new();
+    let faces = common::partial_table(true, true, false);
     let err = compose(
         &Sheet::tape(vec![Frame::Mark(Mark {
-            cut: Cut::Roman,
+            cut: DisplayCut::Roman,
             size: DisplaySize::Pt18,
             text: "H".into(),
             align: MarkAlign::Start,
@@ -1702,5 +1752,103 @@ fn missing_display_is_an_error() {
         &faces,
     )
     .unwrap_err();
-    assert!(matches!(err, tm20_set::Error::MissingDisplay(Cut::Roman)));
+    assert!(matches!(
+        err,
+        tm20_set::Error::MissingDisplay(DisplayCut::Roman)
+    ));
+}
+
+#[test]
+fn rule_takes_a_module_of_air_both_sides() {
+    let faces = common::table();
+    let g = compose(
+        &Sheet::tape(vec![
+            text("H"),
+            Frame::Rule(Rule::tape(Thickness::Two)),
+            text("H"),
+        ]),
+        &faces,
+    )
+    .unwrap();
+    let rule_top = (0..g.height_dots as usize)
+        .find(|&y| full_width_row(&g, y))
+        .expect("rule");
+    let ink_above = (0..rule_top)
+        .rev()
+        .find(|&y| (0..g.width_dots).any(|x| packed_ink(&g, y, x)))
+        .expect("ink above");
+    let below = first_ink_after(&g, rule_top + 2);
+    assert!(
+        rule_top - ink_above >= GRID as usize,
+        "air above the rule: {}",
+        rule_top - ink_above
+    );
+    let after = below - (rule_top + 2);
+    assert!(
+        (GRID as usize - 1..GRID as usize + 3).contains(&after),
+        "air below the rule is one module: {after}"
+    );
+}
+
+#[test]
+fn stacked_heads_take_a_seam() {
+    let faces = common::table();
+    let head = |t: &'static str| {
+        Frame::Head(Head {
+            size: TextSize::Pt11,
+            text: t.into(),
+        })
+    };
+    let stacked = compose(&Sheet::tape(vec![head("One"), head("Two")]), &faces).unwrap();
+    let flowing = compose(&Sheet::tape(vec![head("One"), text("Two")]), &faces).unwrap();
+    let delta = i32::from(stacked.height_dots) - i32::from(flowing.height_dots);
+    assert!(
+        (delta - GRID as i32).abs() <= 1,
+        "stacked heads breathe one module over head-then-prose: {delta}"
+    );
+}
+
+#[test]
+fn long_token_breaks_at_its_punctuation() {
+    let faces = common::table();
+    let url = "https://example.com/a/very/long/path/that/cannot/fit/on/one/line/of/the/tape/ever";
+    let g = compose(
+        &Sheet::tape(vec![Frame::Text(TextBlock::plain(
+            Cut::Italic,
+            TextSize::Pt11,
+            url,
+        ))]),
+        &faces,
+    )
+    .unwrap();
+    // A packed line may legitimately fill the whole measure, so the edge
+    // is not the witness; the extra lines are.
+    assert!(
+        g.height_dots >= 2 * l11(),
+        "the token wrapped over lines instead of clipping on one: {}",
+        g.height_dots
+    );
+}
+
+#[test]
+fn note_dest_wraps_instead_of_clipping() {
+    let faces = common::table();
+    let mut sheet = Sheet::tape(vec![Frame::Text(TextBlock {
+        size: TextSize::Pt11,
+        spans: vec![Span::new(Cut::Roman, "See").noted(NonZeroU32::new(1).unwrap())],
+    })]);
+    sheet.notes = vec![Note::dest(
+        "https://example.com/one/two/three/four/five/six/seven/eight/nine/ten/eleven/x",
+    )];
+    let g = compose(&sheet, &faces).unwrap();
+    let (_, x1, _, _) = ink_bbox(&g);
+    assert!(x1 < PRINTABLE_DOTS - 1, "note URL clipped at {x1}");
+}
+
+#[test]
+fn empty_sheet_charges_nothing() {
+    let faces = common::table();
+    let g = compose(&Sheet::tape(vec![]), &faces).unwrap();
+    assert_eq!(g.height_dots, 1, "an empty sheet is one blank row, not a slug");
+    assert!(g.pixels.iter().all(|&b| b == 0), "and it has no ink");
 }

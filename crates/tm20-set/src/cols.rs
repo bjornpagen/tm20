@@ -2,7 +2,6 @@
 //! Adjacent [`ColAlign::End`] columns take a two-module gap; a single-module
 //! gutter between two hanging figure columns is not a legal plan.
 
-use crate::error::Error;
 use crate::frame::ColAlign;
 use crate::leading::{GridSkip, GRID};
 
@@ -218,8 +217,8 @@ pub(crate) fn layout<const N: usize>(
     x0: u16,
     measure: u16,
     gutter: u16,
-    cost: impl FnMut(&[u16; N]) -> Result<f64, Error>,
-) -> Result<Placed<N>, Error> {
+    cost: impl FnMut(&[u16; N]) -> f64,
+) -> Placed<N> {
     debug_assert!(N >= 2);
     let inner = inner_width(measure, &natural.align, gutter);
     let pref = natural.pref.map(|w| w.min(inner).max(1));
@@ -230,10 +229,10 @@ pub(crate) fn layout<const N: usize>(
     let min_sum = sum(min.iter().copied());
     let widths = match room(pref_sum, min_sum, inner) {
         Room::Fit => fit(table, &spec, inner),
-        Room::Squeeze => squeeze(table, &spec, inner, cost)?,
+        Room::Squeeze => squeeze(table, &spec, inner, cost),
         Room::Overflow => overflow(&spec, inner),
     };
-    Ok(place(table, widths, natural.align, x0, measure, gutter))
+    place(table, widths, natural.align, x0, measure, gutter)
 }
 
 fn fit<const N: usize>(table: Kind, spec: &[Width; N], inner: u16) -> [u16; N] {
@@ -294,10 +293,10 @@ fn squeeze<const N: usize>(
     table: Kind,
     spec: &[Width; N],
     inner: u16,
-    cost: impl FnMut(&[u16; N]) -> Result<f64, Error>,
-) -> Result<[u16; N], Error> {
+    cost: impl FnMut(&[u16; N]) -> f64,
+) -> [u16; N] {
     if next_flex(spec, 0).is_none() {
-        return Ok(overflow(spec, inner));
+        return overflow(spec, inner);
     }
     let (mut widths, budget) = squeeze_budget(spec, inner);
     let mut cx = Squeeze {
@@ -308,9 +307,9 @@ fn squeeze<const N: usize>(
         best_cost: f64::INFINITY,
         cost,
     };
-    cx.search(0, budget)?;
+    cx.search(0, budget);
     if cx.best_cost.is_finite() {
-        return Ok(cx.best);
+        return cx.best;
     }
     for (i, w) in spec.iter().enumerate() {
         if let Width::Flex { min, .. } = *w {
@@ -320,7 +319,7 @@ fn squeeze<const N: usize>(
     if table == Kind::Hang {
         absorb(spec, &mut widths, inner);
     }
-    Ok(widths)
+    widths
 }
 
 fn squeeze_budget<const N: usize>(spec: &[Width; N], inner: u16) -> ([u16; N], u16) {
@@ -354,14 +353,14 @@ struct Squeeze<'a, const N: usize, C> {
 
 impl<const N: usize, C> Squeeze<'_, N, C>
 where
-    C: FnMut(&[u16; N]) -> Result<f64, Error>,
+    C: FnMut(&[u16; N]) -> f64,
 {
-    fn search(&mut self, k: usize, remaining: u16) -> Result<(), Error> {
+    fn search(&mut self, k: usize, remaining: u16) {
         let Some(i) = next_flex(self.spec, k) else {
-            return Ok(());
+            return;
         };
         let Width::Flex { min, pref } = self.spec[i] else {
-            return Ok(());
+            return;
         };
         if next_flex(self.spec, i + 1).is_none() {
             let w = match self.table {
@@ -369,56 +368,49 @@ where
                 Kind::Hang => remaining,
             };
             if w < min {
-                return Ok(());
+                return;
             }
             self.widths[i] = w;
-            let cost = (self.cost)(&self.widths)?;
+            let cost = (self.cost)(&self.widths);
             if cost < self.best_cost {
                 self.best_cost = cost;
                 self.best = self.widths;
             }
-            return Ok(());
+            return;
         }
         let later_min = flex_min_from(self.spec, i + 1);
         each_grid_tick(min, pref, |w| {
             if w.saturating_add(later_min) <= remaining {
                 self.widths[i] = w;
-                self.search(i + 1, remaining - w)?;
+                self.search(i + 1, remaining - w);
             }
-            Ok(())
-        })?;
-        Ok(())
+        });
     }
 }
 
-fn each_grid_tick(
-    lo: u16,
-    hi: u16,
-    mut visit: impl FnMut(u16) -> Result<(), Error>,
-) -> Result<(), Error> {
-    visit(lo)?;
+fn each_grid_tick(lo: u16, hi: u16, mut visit: impl FnMut(u16)) {
+    visit(lo);
     if lo >= hi {
-        return Ok(());
+        return;
     }
     let mut x = (lo / GRID + 1) * GRID;
     if x <= lo {
         x = x.saturating_add(GRID);
     }
     while x < hi {
-        visit(x)?;
+        visit(x);
         let next = x.saturating_add(GRID);
         if next <= x {
             break;
         }
         x = next;
     }
-    visit(hi)?;
-    Ok(())
+    visit(hi);
 }
 
 #[cfg(test)]
-fn idle_cost<const N: usize>(_: &[u16; N]) -> Result<f64, Error> {
-    Ok(0.0)
+fn idle_cost<const N: usize>(_: &[u16; N]) -> f64 {
+    0.0
 }
 
 #[cfg(test)]
@@ -443,7 +435,6 @@ mod tests {
             gutter,
             idle_cost,
         )
-        .unwrap()
     }
 
     #[test]

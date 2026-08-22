@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use std::num::NonZeroU32;
 
 use crate::error::Error;
-use crate::face::{Cut, FaceTable};
+use crate::face::{Cut, DisplayCut, TextFace};
 use crate::leading::{GridSkip, GRID, TASK_BOX};
 use crate::size::{DisplaySize, TextSize};
 use tm20::PRINTABLE_DOTS;
@@ -115,7 +115,7 @@ pub struct Head<'a> {
 
 /// Display line. Wraps to the measure. Center is only legal here.
 pub struct Mark<'a> {
-    pub cut: Cut,
+    pub cut: DisplayCut,
     pub size: DisplaySize,
     pub text: Cow<'a, str>,
     pub align: MarkAlign,
@@ -286,17 +286,16 @@ pub struct List<'a> {
 impl List<'_> {
     /// Marker plus a word space, ceiled to [`GRID`]. Closed so dash, two-digit
     /// decimal, and a task box share a text column at this size.
-    pub fn hang_dots(&self, faces: &FaceTable) -> Result<u16, Error> {
-        let space = faces.text(self.cut)?.shape(" ", self.size).width;
+    pub fn hang_dots(&self, face: &TextFace) -> u16 {
+        let space = face.shape(" ", self.size).width;
         let grid = crate::size::to_frac(GRID);
-        let units = ((self.mark_width(faces)? + space + grid - 1) / grid).max(1) as u16;
-        Ok(units * GRID)
+        let units = ((self.mark_width(face) + space + grid - 1) / grid).max(1) as u16;
+        units * GRID
     }
 
     /// Width of the mark column, before the word space and grid leftover.
     /// Decimal figures right-align in this band; dash and task sit at its start.
-    pub(crate) fn mark_width(&self, faces: &FaceTable) -> Result<i32, Error> {
-        let face = faces.text(self.cut)?;
+    pub(crate) fn mark_width(&self, face: &TextFace) -> i32 {
         let mut mark_w = face.shape(EN_DASH, self.size).width;
         mark_w = mark_w.max(face.shape_figure("10.", self.size).width);
         mark_w = mark_w.max(crate::size::to_frac(TASK_BOX));
@@ -307,7 +306,7 @@ impl List<'_> {
                 mark_w = mark_w.max(face.shape_figure(&t, self.size).width);
             }
         }
-        Ok(mark_w)
+        mark_w
     }
 }
 
@@ -328,6 +327,22 @@ pub struct Quote<'a> {
 pub struct Code<'a> {
     pub size: TextSize,
     pub lines: Vec<Cow<'a, str>>,
+}
+
+impl Code<'_> {
+    /// Parse `literal` into lines. Tabs expand to column stops here, at
+    /// construction, so paint never sees U+0009. A trailing newline is the
+    /// fence, not a line.
+    pub fn new(size: TextSize, literal: &str) -> Code<'static> {
+        let mut lines: Vec<Cow<'static, str>> = literal
+            .split('\n')
+            .map(|s| Cow::Owned(detab(s).into_owned()))
+            .collect();
+        if lines.last().is_some_and(|s| s.is_empty()) {
+            lines.pop();
+        }
+        Code { size, lines }
+    }
 }
 
 const TAB_STOP: usize = 8;
@@ -404,8 +419,8 @@ impl Figure {
 
 /// TeX box. Natural size; shrinks if wider than the measure; never scales up.
 /// One token: there is no math-atom list to wrap.
-/// `ascent` / `depth` are the TeX box (dots). A line’s slug reads these, not a
-/// constant Plus2. `height` is the PNG; it may be smaller than ascent+depth.
+/// The PNG *is* the box: `ascent + depth == height`. The cut is the TeX
+/// baseline, scaled onto the raster so it cannot sit above the bits.
 /// `bits` is the protocol table: packed MSB-first, 1 is black.
 #[derive(Clone)]
 pub struct Math {
@@ -430,15 +445,16 @@ impl Math {
     }
 
     /// Decode PNG at native size. Shrink if wider than `max_w`; never scale up.
-    /// `ascent` and `depth` are the TeX box in source pixels; both scale if the PNG shrinks.
+    /// TeX `ascent` / `depth` name the baseline cut; they are mapped onto the
+    /// raster so `ascent + depth == height`. RaTeX is not re-rendered here.
     pub fn from_png(bytes: &[u8], max_w: u16, ascent: u16, depth: u16) -> Result<Self, Error> {
         let luma = decode_luma(bytes)?;
         let src_w = luma.width();
         let (dst_w, dst_h, samples) = fit_luma(&luma, max_w)?;
         let scale = dst_w as f32 / src_w as f32;
-        let ascent = ((ascent as f32 * scale).round() as u16).min(dst_h as u16);
-        let png_depth = (dst_h as u16).saturating_sub(ascent);
-        let depth = ((depth as f32 * scale).round() as u16).max(png_depth);
+        let tex_a = (ascent as f32 * scale).round() as u16;
+        let tex_d = (depth as f32 * scale).round() as u16;
+        let (ascent, depth) = baseline_cut(dst_h as u16, tex_a, tex_d);
         Ok(Self {
             width: dst_w as u16,
             height: dst_h as u16,
@@ -491,6 +507,21 @@ fn fit_luma(luma: &image::GrayImage, max_w: u16) -> Result<(u32, u32, Vec<f32>),
         let samples: Vec<f32> = resized.pixels().map(|p| p.0[0] as f32).collect();
         Ok((dst_w, dst_h, samples))
     }
+}
+
+/// Baseline divides the raster in the TeX ratio. A cut past the PNG is
+/// unrepresentable: `ascent + depth == height`.
+fn baseline_cut(height: u16, tex_ascent: u16, tex_depth: u16) -> (u16, u16) {
+    let span = u32::from(tex_ascent).saturating_add(u32::from(tex_depth));
+    if height == 0 {
+        return (0, 0);
+    }
+    if span == 0 {
+        return (height / 2, height - height / 2);
+    }
+    let ascent = ((u32::from(height) * u32::from(tex_ascent) + span / 2) / span) as u16;
+    let ascent = ascent.min(height);
+    (ascent, height - ascent)
 }
 
 fn floyd_steinberg(w: u32, h: u32, mut px: Vec<f32>) -> Vec<u8> {
@@ -681,6 +712,13 @@ mod tests {
     }
 
     #[test]
+    fn code_new_is_the_parse() {
+        let code = Code::new(TextSize::Pt11, "col\tumn\nnext\n");
+        assert_eq!(code.lines, ["col     umn", "next"]);
+        assert!(code.lines.iter().all(|l| !l.contains('\t')));
+    }
+
+    #[test]
     fn math_from_png_does_not_scale_up() {
         let img = image::GrayImage::from_pixel(4, 2, image::Luma([0]));
         let mut buf = Vec::new();
@@ -694,6 +732,8 @@ mod tests {
         let shrink = Math::from_png(&buf, 2, 2, 0).unwrap();
         assert_eq!(shrink.width, 2);
         assert!(shrink.height >= 1);
-        assert!(shrink.ascent <= shrink.height);
+        assert_eq!(shrink.ascent + shrink.depth, shrink.height);
+        let cropped = Math::from_png(&buf, 16, 8, 4).unwrap();
+        assert_eq!(cropped.ascent + cropped.depth, cropped.height);
     }
 }

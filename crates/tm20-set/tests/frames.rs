@@ -4,8 +4,8 @@ mod common;
 
 use tm20::encode::encode;
 use tm20_set::{
-    Code, Cut, DisplaySize, Figure, Frame, Head, Mark, MarkAlign, Math, Quote, Rule, Sheet, Span,
-    TextBlock, TextSize, Thickness, Tracking, lower,
+    Code, Cut, DisplayCut, DisplaySize, Figure, Frame, Head, Mark, MarkAlign, Math, Quote, Rule,
+    Sheet, Span, TextBlock, TextSize, Thickness, Tracking, lower,
 };
 
 fn cover(frame: &Frame<'_>) {
@@ -39,7 +39,7 @@ fn kinds() -> Vec<Frame<'static>> {
             text: "Head".into(),
         }),
         Frame::Mark(Mark {
-            cut: Cut::Roman,
+            cut: DisplayCut::Roman,
             size: DisplaySize::Pt18,
             text: "MARK".into(),
             align: MarkAlign::Start,

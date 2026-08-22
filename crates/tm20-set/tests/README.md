@@ -32,5 +32,14 @@ Init, PC437, one or more Graphics (each ≤ 910 dots tall), Feed 3, cut. No `Pri
 - text leading is Plus2 (11 pt → 37 dots)
 - `HANG` is 3 dots (type under a form rule)
 - `GRID` is 8 dots
-- Head has space above, none below, and always uses Bold upright
+- Head has space above, none below, and always uses Bold upright; stacked
+  heads breathe one `GRID`
+- a rule takes one `GRID` above and below; it kisses a masthead above it and
+  hangs the table after it
+- quote hang is `[16, 8, 8]` by depth — the first voice is two modules
+- a word space is the Roman space at that size, whatever cut spoke last
+- a token wider than the measure breaks after URI punctuation
+  (`/ ? & = # - _ . , ; : @`); with no punctuation it clips at the tape edge
+- the face check happens once: `compose` parses a `Kit` at its boundary and
+  paint never asks again
 - shaping always asks for `kern liga calt`

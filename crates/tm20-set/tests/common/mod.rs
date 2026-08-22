@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use tm20_set::{
-    ColAlign, Cols, Cut, DecimalDelim, Face, FaceTable, Frame, GridSkip, List, ListFit, ListItem,
-    Marker, Span, TextBlock, TextSize,
+    ColAlign, Cols, Cut, DecimalDelim, DisplayCut, Face, FaceTable, Frame, GridSkip, List, ListFit,
+    ListItem, Marker, Span, TextBlock, TextSize,
 };
 
 pub fn table() -> FaceTable {
@@ -27,12 +27,12 @@ pub fn table() -> FaceTable {
                         .expect("Helvetica Regular")
                         .text(),
                 );
-                table.set_display(Cut::Roman, face.display());
+                table.set_display(DisplayCut::Roman, face.display());
             }
             "Helvetica-Bold" => table.set_text(Cut::Bold, face.text()),
             "Helvetica-Oblique" => table.set_text(Cut::Italic, face.text()),
             "Helvetica-BoldOblique" => table.set_text(Cut::BoldItalic, face.text()),
-            "Helvetica-Light" => table.set_display(Cut::Light, face.display()),
+            "Helvetica-Light" => table.set_display(DisplayCut::Light, face.display()),
             _ => {}
         }
     }
@@ -53,6 +53,44 @@ fn load_mono() -> Face {
         }
     }
     panic!("Menlo-Regular not in Menlo.ttc")
+}
+
+/// A table missing exactly the named pieces, for boundary-error facts.
+#[allow(dead_code)]
+pub fn partial_table(bold: bool, mono: bool, display: bool) -> FaceTable {
+    let bytes: Arc<[u8]> = std::fs::read("/System/Library/Fonts/Helvetica.ttc")
+        .expect("Helvetica.ttc")
+        .into();
+    let mut out = FaceTable::new();
+    for index in 0.. {
+        let Ok(face) = Face::from_bytes_index(bytes.clone(), index) else {
+            break;
+        };
+        let Some(name) = face.postscript_name() else {
+            continue;
+        };
+        match name.as_str() {
+            "Helvetica" => {
+                out.set_text(
+                    Cut::Roman,
+                    Face::from_bytes_index(bytes.clone(), index)
+                        .expect("Helvetica Regular")
+                        .text(),
+                );
+                if display {
+                    out.set_display(DisplayCut::Roman, face.display());
+                }
+            }
+            "Helvetica-Bold" if bold => out.set_text(Cut::Bold, face.text()),
+            "Helvetica-Oblique" => out.set_text(Cut::Italic, face.text()),
+            "Helvetica-BoldOblique" => out.set_text(Cut::BoldItalic, face.text()),
+            _ => {}
+        }
+    }
+    if mono {
+        out.set_text(Cut::Mono, load_mono().text());
+    }
+    out
 }
 
 #[allow(dead_code)]

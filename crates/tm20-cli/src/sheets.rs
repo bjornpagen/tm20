@@ -4,7 +4,7 @@ use std::num::NonZeroU32;
 
 use tm20::document::Document;
 use tm20_set::{
-    Code, ColAlign, Cols, Cut, DecimalDelim, DisplaySize, Figure, Frame, GridSkip, Head, List,
+    Code, ColAlign, Cols, Cut, DecimalDelim, DisplayCut, DisplaySize, Figure, Frame, GridSkip, Head, List,
     ListFit, ListItem, Mark, MarkAlign, Marker, Note, Quote, Rule, Sheet, Span, TextBlock,
     TextSize, Thickness, Tracking,
 };
@@ -77,7 +77,7 @@ fn ticket() -> Result<Document> {
     let body = TextSize::Pt11;
     let frames = vec![
         Frame::Mark(Mark {
-            cut: Cut::Roman,
+            cut: DisplayCut::Roman,
             size: DisplaySize::Pt18,
             text: "RECEIPT".into(),
             align: MarkAlign::Start,
@@ -108,7 +108,7 @@ fn prose() -> Result<Document> {
     let body = TextSize::Pt11;
     let frames = vec![
         Frame::Mark(Mark {
-            cut: Cut::Roman,
+            cut: DisplayCut::Roman,
             size: DisplaySize::Pt18,
             text: "TM-T20III".into(),
             align: MarkAlign::Start,
@@ -174,15 +174,15 @@ fn helvetica() -> Result<Document> {
     let faces = system_table()?;
     let body = TextSize::Pt11;
     let mut frames = vec![Frame::Mark(Mark {
-        cut: Cut::Roman,
+        cut: DisplayCut::Roman,
         size: DisplaySize::Pt18,
         text: "Helvetica".into(),
         align: MarkAlign::Start,
         tracking: Tracking(0),
     })];
-    if faces.display(Cut::Light).is_ok() {
+    if faces.display(DisplayCut::Light).is_ok() {
         frames.push(Frame::Mark(Mark {
-            cut: Cut::Light,
+            cut: DisplayCut::Light,
             size: DisplaySize::Pt18,
             text: "Light".into(),
             align: MarkAlign::Start,
@@ -216,7 +216,7 @@ fn suite() -> Result<Document> {
     let ruder = Span::new(Cut::Italic, "Typographie").noted(NonZeroU32::new(2).unwrap());
     let mut sheet = Sheet::tape(vec![
         Frame::Mark(Mark {
-            cut: Cut::Roman,
+            cut: DisplayCut::Roman,
             size: DisplaySize::Pt18,
             text: "SUITE".into(),
             align: MarkAlign::Start,

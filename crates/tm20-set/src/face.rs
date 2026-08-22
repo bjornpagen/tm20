@@ -15,21 +15,21 @@ use crate::error::Error;
 use crate::size::{DisplaySize, TextSize, FRAC};
 use crate::strike::{self, Strike};
 
-/// Named voice. The sheet writes these; [`FaceTable`] says what they are.
+/// Named text voice. The sheet writes these; [`FaceTable`] says what they are.
+/// Display voices are [`DisplayCut`]: a Light paragraph or a Mono masthead is
+/// unrepresentable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Cut {
-    Light,
     Roman,
     Italic,
-    Medium,
     Bold,
     BoldItalic,
     Mono,
 }
 
 impl Cut {
-    const COUNT: usize = 7;
+    const COUNT: usize = 5;
 
     fn index(self) -> usize {
         self as usize
@@ -39,13 +39,36 @@ impl Cut {
 impl std::fmt::Display for Cut {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Cut::Light => "Light",
             Cut::Roman => "Roman",
             Cut::Italic => "Italic",
-            Cut::Medium => "Medium",
             Cut::Bold => "Bold",
             Cut::BoldItalic => "BoldItalic",
             Cut::Mono => "Mono",
+        })
+    }
+}
+
+/// Named display voice. Only a [`crate::Mark`] speaks at display size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum DisplayCut {
+    Roman,
+    Light,
+}
+
+impl DisplayCut {
+    const COUNT: usize = 2;
+
+    fn index(self) -> usize {
+        self as usize
+    }
+}
+
+impl std::fmt::Display for DisplayCut {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            DisplayCut::Roman => "Roman",
+            DisplayCut::Light => "Light",
         })
     }
 }
@@ -54,7 +77,7 @@ impl std::fmt::Display for Cut {
 #[derive(Default)]
 pub struct FaceTable {
     text: [Option<TextFace>; Cut::COUNT],
-    display: [Option<DisplayFace>; Cut::COUNT],
+    display: [Option<DisplayFace>; DisplayCut::COUNT],
 }
 
 impl FaceTable {
@@ -66,7 +89,7 @@ impl FaceTable {
         self.text[cut.index()] = Some(face);
     }
 
-    pub fn set_display(&mut self, cut: Cut, face: DisplayFace) {
+    pub fn set_display(&mut self, cut: DisplayCut, face: DisplayFace) {
         self.display[cut.index()] = Some(face);
     }
 
@@ -76,10 +99,48 @@ impl FaceTable {
             .ok_or(Error::MissingText(cut))
     }
 
-    pub fn display(&self, cut: Cut) -> Result<&DisplayFace, Error> {
+    pub fn display(&self, cut: DisplayCut) -> Result<&DisplayFace, Error> {
         self.display[cut.index()]
             .as_ref()
             .ok_or(Error::MissingDisplay(cut))
+    }
+
+    /// Parse this table into a [`Kit`]. Every text cut and the Roman display
+    /// are required once, here; Light stays optional until a Mark names it.
+    pub fn kit(&self) -> Result<Kit<'_>, Error> {
+        Ok(Kit {
+            text: [
+                self.text(Cut::Roman)?,
+                self.text(Cut::Italic)?,
+                self.text(Cut::Bold)?,
+                self.text(Cut::BoldItalic)?,
+                self.text(Cut::Mono)?,
+            ],
+            display: self.display(DisplayCut::Roman)?,
+            light: self.display(DisplayCut::Light).ok(),
+        })
+    }
+}
+
+/// Proof that a [`FaceTable`] covers every voice a sheet can name. Compose
+/// parses one at its boundary; paint indexes and never checks again.
+pub struct Kit<'f> {
+    /// Indexed by [`Cut`] discriminant; [`FaceTable::kit`] builds it in order.
+    text: [&'f TextFace; Cut::COUNT],
+    display: &'f DisplayFace,
+    light: Option<&'f DisplayFace>,
+}
+
+impl<'f> Kit<'f> {
+    pub(crate) fn text(&self, cut: Cut) -> &'f TextFace {
+        self.text[cut.index()]
+    }
+
+    pub(crate) fn display(&self, cut: DisplayCut) -> Result<&'f DisplayFace, Error> {
+        match cut {
+            DisplayCut::Roman => Ok(self.display),
+            DisplayCut::Light => self.light.ok_or(Error::MissingDisplay(DisplayCut::Light)),
+        }
     }
 }
 
@@ -457,6 +518,59 @@ mod tests {
         let face = Face::from_bytes_index(bytes, 0).expect("glyf OpenType");
         let name = face.postscript_name().expect("PostScript name");
         assert!(name.starts_with("Helvetica"), "{name}");
+    }
+
+    #[test]
+    fn kit_indexes_text_by_cut() {
+        let helv: Arc<[u8]> = std::fs::read("/System/Library/Fonts/Helvetica.ttc")
+            .expect("Helvetica.ttc")
+            .into();
+        let menlo: Arc<[u8]> = std::fs::read("/System/Library/Fonts/Menlo.ttc")
+            .expect("Menlo.ttc")
+            .into();
+        let mut table = FaceTable::new();
+        for (bytes, is_mono) in [(&helv, false), (&menlo, true)] {
+            for index in 0.. {
+                let Ok(face) = Face::from_bytes_index(bytes.clone(), index) else {
+                    break;
+                };
+                match (face.postscript_name().as_deref(), is_mono) {
+                    (Some("Helvetica"), false) => {
+                        table.set_text(
+                            Cut::Roman,
+                            Face::from_bytes_index(bytes.clone(), index).unwrap().text(),
+                        );
+                        table.set_display(DisplayCut::Roman, face.display());
+                    }
+                    (Some("Helvetica-Bold"), false) => table.set_text(Cut::Bold, face.text()),
+                    (Some("Helvetica-Oblique"), false) => {
+                        table.set_text(Cut::Italic, face.text());
+                    }
+                    (Some("Helvetica-BoldOblique"), false) => {
+                        table.set_text(Cut::BoldItalic, face.text());
+                    }
+                    (Some("Menlo-Regular"), true) => table.set_text(Cut::Mono, face.text()),
+                    _ => {}
+                }
+            }
+        }
+        let kit = table.kit().expect("all five cuts and Roman display");
+        for cut in [
+            Cut::Roman,
+            Cut::Italic,
+            Cut::Bold,
+            Cut::BoldItalic,
+            Cut::Mono,
+        ] {
+            assert!(
+                std::ptr::eq(kit.text(cut), table.text(cut).unwrap()),
+                "kit[{cut}] must be the table's {cut}"
+            );
+        }
+        assert!(matches!(
+            kit.display(DisplayCut::Light),
+            Err(Error::MissingDisplay(DisplayCut::Light))
+        ));
     }
 
     #[test]

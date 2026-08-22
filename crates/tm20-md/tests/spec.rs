@@ -698,3 +698,23 @@ fn bad_latex_is_an_error() {
 fn math_in_a_heading_is_an_error() {
     assert!(matches!(parse_err("# \\(x\\)"), Error::Math));
 }
+
+#[test]
+fn bare_www_autolink_gets_no_note() {
+    let s = parse("Go to www.example.com now");
+    assert!(s.notes.is_empty(), "a bare autolink carries no note");
+    match &s.frames[0] {
+        Frame::Text(b) => assert!(b.spans.iter().all(|sp| span_note(sp).is_none())),
+        _ => panic!("text"),
+    }
+}
+
+#[test]
+fn nul_is_a_visible_replacement() {
+    let s = parse("before\u{0}after");
+    let runs = text_runs(&s);
+    assert!(
+        runs.iter().any(|(_, t)| t.contains('\u{FFFD}')),
+        "U+0000 must surface as U+FFFD, not vanish: {runs:?}"
+    );
+}

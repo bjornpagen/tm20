@@ -60,26 +60,29 @@ ragged right. 8 dots ≈ 1 mm of paper.
 | paragraph | 11 pt Roman, ~36–42 chars/line |
 | `*em*` / `**strong**` / `***both***` | Oblique / Bold / BoldOblique |
 | `` `code` `` | Menlo inline |
-| fenced or indented code block | mono block, hung 8 dots, **never wraps** — ~30 chars, then clips |
-| `---` on its own | full-measure rule, 2 dots thick |
+| fenced or indented code block | mono block, hung 8 dots, tabs expand to 8-col stops, **never wraps** — ~30 chars, then clips |
+| `---` on its own | full-measure rule, 2 dots thick, one module of air above and below (kisses a masthead or a table total) |
 | `- item` | dash-marked list; `1.` / `3)` ordered (start and delimiter honored) |
 | `- [ ]` / `- [x]` | checkbox tasks |
-| `> quote` | indented block |
+| `> quote` | hangs 16 dots so the voice reads; each nest adds 8 |
 | 2–3 column pipe table | aligned columns, bold header; `---:` right-aligns (use for numbers); `:---:` is left, not center |
 | `[text](url)` | italic text + superscript number; URL (and `"title"`) print as a numbered endnote at 8 pt; duplicate URLs share one number |
-| `<https://…>` or a bare URL | italic, no endnote (the URL is already on the page) |
+| `<https://…>` or a bare URL — `www.…` included | italic, no endnote (the URL is already on the page) |
 | `<a@b.com>` | italic address, no note; `mailto:` is stripped in notes |
 | `[^x]` footnote | endnote in the same number sequence as links, 8 pt; unused definitions are dropped silently |
 | `\(E=mc^2\)` / `\[ ... \]` | real typeset math, inline / display (RaTeX) |
 | `![alt](local.png)` alone in a paragraph | Floyd–Steinberg dithered figure, centered; shrunk if wider than 576, **never upscaled**; alt text never prints |
-| `"quotes"`, `--`, `---` inline | smart punctuation: curled quotes, en dash, em dash |
+| `"quotes"`, `--`, `---`, `...` inline | smart punctuation: curled quotes, en dash, em dash, ellipsis |
 | `~~strike~~` | literal tildes (extension off, on purpose) |
 | `$4.50` | literal dollars — `$` is never math |
 
 Heading interiors are flattened to plain text: emphasis, code, and links
 inside a heading lose their styling (a link there prints as bare words, no
 note). Math in a heading is a hard error. Setext headings work (`===` →
-masthead, `---` underline → bold head).
+masthead, `---` underline → bold head). Escaped `\[x\]` is display math —
+`math_latex` owns `\[…\]` — so literal brackets are just `[x]`. Overlong URLs
+in prose and notes break after URI punctuation; a token with no punctuation
+still clips, honestly.
 
 ## Hard errors — the whole job fails, nothing prints
 
@@ -122,7 +125,7 @@ prints as a rule plus stray text. Never emit front matter.
 
 ## Model tape
 
-This file lowers cleanly (verified) — 538 dots ≈ 67 mm of paper:
+This file lowers cleanly (verified) — 509 dots ≈ 64 mm of paper:
 
 ```markdown
 # Pickup
