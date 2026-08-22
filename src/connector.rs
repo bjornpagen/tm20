@@ -110,6 +110,24 @@ pub trait CursorCodec: Sized + Send + Sync + 'static {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ExternalKey(pub [u8; 32]);
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ProviderLocator(Box<str>);
+
+impl ProviderLocator {
+    pub fn parse(value: impl Into<Box<str>>) -> Result<Self, ConnectorError> {
+        let value = value.into();
+        if value.is_empty() || value.chars().any(char::is_control) {
+            return Err(ConnectorError::InvalidProviderLocator);
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NormalizedObservation {
     pub account: ExternalKey,
@@ -133,10 +151,11 @@ pub struct PullBatch {
     pub next_cursor: CursorToken,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectTarget {
     pub account: ExternalKey,
     pub object: ExternalKey,
+    pub locator: ProviderLocator,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -289,6 +308,7 @@ pub enum ConnectorError {
         verb: EffectVerb,
     },
     EffectForAnotherProvider,
+    InvalidProviderLocator,
     Provider {
         connector: ConnectorKey,
         message: String,
@@ -315,6 +335,7 @@ impl fmt::Display for ConnectorError {
                 write!(f, "connector {connector} does not support {verb:?}")
             }
             Self::EffectForAnotherProvider => f.write_str("effect belongs to another provider"),
+            Self::InvalidProviderLocator => f.write_str("provider locator is empty or invalid"),
             Self::Provider { connector, message } => {
                 write!(f, "connector {connector}: {message}")
             }
@@ -417,6 +438,7 @@ mod tests {
             target: EffectTarget {
                 account: key,
                 object: key,
+                locator: ProviderLocator::parse("message-1").expect("locator"),
             },
         }
     }

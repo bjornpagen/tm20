@@ -12,14 +12,16 @@ pub mod connector;
 pub mod delivery;
 pub mod paper;
 pub mod policy;
+pub mod providers;
 pub mod rollout;
 pub mod schema;
+pub mod transport;
 
 pub use connector::{
     Capability, Connector, ConnectorDescriptor, ConnectorError, ConnectorRegistry, CursorCodec,
     CursorToken, EffectOutcome, EffectRequest, EffectTarget, EffectVerb, ErasedConnector,
-    ExternalKey, NormalizedObservation, ObservationKind, PullBatch, SourceClass, TypedConnector,
-    TypedPullBatch,
+    ExternalKey, NormalizedObservation, ObservationKind, ProviderLocator, PullBatch, SourceClass,
+    TypedConnector, TypedPullBatch,
 };
 pub use delivery::{
     Ambiguous, AppliedEffect, Attempt, AttemptId, Delivered, DeliveryError, DeliveryMachine,
@@ -37,3 +39,7 @@ pub use policy::{
     Urgency, WindowSelector, default_policy,
 };
 pub use rollout::{BuiltinConnector, ConnectorPlan, RolloutStage, rollout};
+pub use transport::{
+    HttpMethod, HttpRequest, HttpResponse, HttpStatus, HttpTransport, MockHttp, RequestBody,
+    TransportError,
+};

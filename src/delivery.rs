@@ -7,7 +7,9 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::connector::{EffectRequest, EffectTarget, EffectVerb, ExternalKey};
+use crate::connector::{
+    EffectRequest, EffectTarget, EffectVerb, ExternalKey, ProviderLocator,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AttemptId(pub u64);
@@ -291,6 +293,7 @@ mod tests {
         EffectTarget {
             account: ZERO,
             object: ONE,
+            locator: ProviderLocator::parse("message-1").expect("locator"),
         }
     }
 
