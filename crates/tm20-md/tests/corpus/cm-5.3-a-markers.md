@@ -1,3 +1,0 @@
-- dash
-* star
-+ plus

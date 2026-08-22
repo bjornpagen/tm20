@@ -1,6 +1,3 @@
-# Same dated nightly as ../bumbledb (nightly-2026-08-15). The pin
-# moves deliberately. No nightly language features yet: none of them
-# delete code in this stack (no try_blocks, no portable_simd).
 [toolchain]
 channel = "nightly-2026-08-15"
 components = ["rustfmt", "clippy", "rust-src"]

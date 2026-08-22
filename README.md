@@ -1,55 +1,95 @@
-# tm20
+# Paper Attention Router
 
-ESC/POS for Epson TM-T20 printers, proven on the TM-T20III (`04b8:0e28`).
-Protocol, typesetter, markdown. There is no printer builder and no CUPS.
+A local-first attention control plane built on
+[Bumbledb](https://github.com/bjornpagen/bumbledb) and projected onto paper
+through [tm20](https://github.com/bjornpagen/tm20).
 
-Pinned to **nightly-2026-08-15** (`rust-toolchain.toml`), same dated nightly
-as bumbledb. Edition 2024. `cargo clippy --workspace --all-targets -- -D warnings`
-is the lint gate (`all` + `pedantic`, `unsafe_code = deny`).
+This repository is deliberately a library, not a daemon. Runtime, scheduling,
+credentials, and live provider clients remain host decisions. The library
+defines the stable part first:
 
-Three library crates and a CLI, 0BSD, one workspace. Nothing is published;
-the repo is the distribution.
+- a constraint-checked routing ledger;
+- typed provider plugins erased once to `dyn Connector`;
+- deterministic routing and writeback policy as data;
+- bounded interrupt and digest tapes;
+- delivery typestates that distinguish failure from uncertainty;
+- capability and rollout data for HN, Gmail, Slack, Google Chat, and SMServer.
 
-The `tm20-set` binary lives in `tm20-cli` so markdown can depend
-on the typesetter without a crate cycle.
+## Doctrine
 
-- **`tm20`** — protocol. A `Document` of `Command` values encodes to bytes; a
-  `Transport` writes them. USB, serial, TCP. `Command::Text` is CP437.
-  The printer never sees a font. `cargo run -p tm20` is the protocol CLI.
-- **`tm20-set`** — typesetter. A `Sheet` of `Frame`s (flush left, Vignelli
-  sizes, leading on an 8-dot grid) compiles to one or more `tm20::Graphics`
-  (each `GS ( L)` payload is at most 910 dots tall at tape width). OpenType
-  lives here as bytes. Which face those bytes came from is the program that
-  prints, not the library.
-- **`tm20-md`** — CommonMark 0.31.2 plus pipe tables, task lists, autolinks,
-  footnotes, and LaTeX math (`\(inline\)`, `\[display\]`), walked into a
-  `Sheet`. Dollars stay currency. comrak and RaTeX live here. This crate does
-  not depend on `tm20`.
+The representation determines the control flow.
 
-`tm20-set` depends on `tm20`. Never the reverse.
+- A provider event is an `Observation`, not yet a notification.
+- A `Notice` is an explicit routing decision.
+- An `Edition` is immutable ordered membership, not a live inbox query.
+- `Delivered`, `Failed`, and `Ambiguous` are different types and ledger arms.
+- Printing, human reading, and upstream read state are separate facts.
+- A post-print `MarkRead` or `SendReadReceipt` is an independently retryable
+  `EffectIntent`.
+- Push is a wake-up hint. Every plugin owns a durable reconciliation cursor.
+- Raw MIME, attachments, and provider JSON live outside Bumbledb behind
+  content digests.
 
-```rust
-use tm20::{encode, Command, Document, Transport, Usb};
+## Architecture
 
-let doc = Document::new(vec![
-    Command::Init,
-    Command::Text("SYSTEM ONLINE".into()),
-    Command::Feed { lines: 3 },
-    Command::Cut,
-]);
-Usb::open(None)?.write(&encode(&doc)?)?;
+```text
+typed provider plugin
+        │
+        ▼
+ErasedConnector<T> ──► Box<dyn Connector>
+        │
+        ▼
+NormalizedObservation ──► RouterLedger
+        │
+        ▼
+PolicyTable ──► Notice ──► bounded Edition
+        │                       │
+        │                       ▼
+        │                 tm20 compile
+        │                       │
+        └──────────────► delivery typestate
+                                │
+                         Delivered only
+                                │
+                                ▼
+                         UpstreamEffect
 ```
 
-This is one encoding per job. Commands the T20 firmware ignores or that have
-a newer replacement stay unrepresentable. Other 80 mm Epson TMs that speak
-the same modern subset (`GS ( L`, function-B barcodes) should work; USB open
-is hardcoded to the T20III product id until someone adds another.
+Provider-native cursor and effect types never cross the typed plugin boundary.
+`ErasedConnector<T>` performs the single deliberate erasure needed for a
+runtime registry. The policy table is parsed once; its returned type proves
+that there is one total fallback, unique precedence, no public-feed interrupt,
+and no unsafe full-excerpt rule.
 
+## Modules
+
+- [`schema`](src/schema.rs): Bumbledb theory and lifecycle constraints.
+- [`connector`](src/connector.rs): typed plugin API and `dyn` erasure.
+- [`policy`](src/policy.rs): routing/effect data and evaluator.
+- [`paper`](src/paper.rs): parsed text, hard tape budget, tm20 compilation.
+- [`delivery`](src/delivery.rs): compile-time delivery transitions.
+- [`rollout`](src/rollout.rs): connector capabilities, setup gates, and order.
+
+## Current connector plan
+
+| Source | Reliable cursor | Wake-up path | Effects |
+| --- | --- | --- | --- |
+| Hacker News | `maxitem` + ranking snapshot | polling | none |
+| Gmail | `historyId` | polling, later Pub/Sub | mark read |
+| Slack | channel message timestamp | Socket Mode | none |
+| Google Chat | overlapped space-event time | later Pub/Sub | none |
+| iMessage | bridge + message GUID | SMServer WebSocket | read receipt |
+
+The sequence is synthetic fixtures, Hacker News, Gmail, Slack, Google Chat,
+then the version-fragile jailbroken-phone bridge.
+
+## Verification
+
+```sh
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
 ```
-cargo run -p tm20 -- hello
-cargo run -p tm20 -- test all          # skip --wait if bulk IN is dirty
-cargo run --bin tm20-set -- print ticket
-cargo run --bin tm20-set -- print helvetica
-cargo run --bin tm20-set -- print md path.md
-cargo run --bin tm20-set -- print md crates/tm20-md/fixtures
-```
+
+The tests exercise schema rejections, typed plugin erasure, policy safety,
+paper overflow, markup neutralization, typestate delivery, and rollout order.

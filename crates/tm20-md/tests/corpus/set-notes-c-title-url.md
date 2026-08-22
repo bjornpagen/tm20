@@ -1,1 +1,0 @@
-See [the work](https://example.com/very/long/path/to/a/document/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz "A long title that names the work in full so the note carries both a wrapping title and a wrapping destination").

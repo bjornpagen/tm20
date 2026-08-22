@@ -1,6 +1,0 @@
-Setext head
----
-
-After blank
-
----
