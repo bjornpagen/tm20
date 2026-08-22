@@ -10,6 +10,7 @@ readme = "../../README.md"
 description = "CommonMark 0.31.2 plus pipe tables and LaTeX math, lowered to a tm20-set Sheet"
 keywords = ["markdown", "commonmark", "latex", "typesetting", "thermal"]
 categories = ["text-processing"]
+exclude = ["tests/corpus", "tests/goldens", "tests/reject"]
 
 [dependencies]
 comrak = { version = "0.54", default-features = false }
@@ -20,7 +21,7 @@ ratex-render = { version = "0.1.14", features = ["embed-fonts"] }
 ratex-types = "0.1.14"
 
 [dev-dependencies]
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 tm20 = { workspace = true }
 
 [lints]
