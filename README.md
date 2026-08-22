@@ -7,20 +7,15 @@ Pinned to **nightly-2026-08-15** (`rust-toolchain.toml`), same dated nightly
 as bumbledb. Edition 2024. `cargo clippy --workspace --all-targets -- -D warnings`
 is the lint gate (`all` + `pedantic`, `unsafe_code = deny`).
 
-Crates.io, 0BSD, **0.1.0**:
+Three library crates and a CLI, 0BSD, one workspace. Nothing is published;
+the repo is the distribution.
 
-```toml
-tm20 = "0.1"
-tm20-set = "0.1"
-tm20-md = "0.1"
-```
-
-The `tm20-set` binary lives in unpublished `tm20-cli` so markdown can depend
+The `tm20-set` binary lives in `tm20-cli` so markdown can depend
 on the typesetter without a crate cycle.
 
 - **`tm20`** — protocol. A `Document` of `Command` values encodes to bytes; a
   `Transport` writes them. USB, serial, TCP. `Command::Text` is CP437.
-  The printer never sees a font. `cargo install tm20` is the protocol CLI.
+  The printer never sees a font. `cargo run -p tm20` is the protocol CLI.
 - **`tm20-set`** — typesetter. A `Sheet` of `Frame`s (flush left, Vignelli
   sizes, leading on an 8-dot grid) compiles to one or more `tm20::Graphics`
   (each `GS ( L)` payload is at most 910 dots tall at tape width). OpenType

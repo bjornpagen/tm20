@@ -3,13 +3,7 @@ name = "tm20"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-authors.workspace = true
-repository.workspace = true
-homepage.workspace = true
-readme = "../../README.md"
-description = "ESC/POS dialect for Epson TM-T20 printers: a Command IR, an encoder, and transports"
-keywords = ["escpos", "epson", "thermal", "receipt", "printer"]
-categories = ["hardware-support"]
+publish.workspace = true
 
 [[bin]]
 name = "tm20"

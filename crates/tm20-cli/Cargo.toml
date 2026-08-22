@@ -3,11 +3,7 @@ name = "tm20-cli"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-authors.workspace = true
-repository.workspace = true
-homepage.workspace = true
-publish = false
-description = "Print a tm20-set Sheet or a CommonMark file on the TM-T20III"
+publish.workspace = true
 
 [[bin]]
 name = "tm20-set"

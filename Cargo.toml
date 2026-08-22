@@ -5,14 +5,12 @@ members = ["crates/tm20", "crates/tm20-set", "crates/tm20-md", "crates/tm20-cli"
 [workspace.package]
 edition = "2024"
 license = "0BSD"
-repository = "https://github.com/bjornpagen/tm20"
-homepage = "https://github.com/bjornpagen/tm20"
-authors = ["Bjorn Pagen <11238136+bjornpagen@users.noreply.github.com>"]
+publish = false
 
 [workspace.dependencies]
-tm20 = { path = "crates/tm20", version = "0.1.0" }
-tm20-set = { path = "crates/tm20-set", version = "0.1.0" }
-tm20-md = { path = "crates/tm20-md", version = "0.1.0" }
+tm20 = { path = "crates/tm20" }
+tm20-set = { path = "crates/tm20-set" }
+tm20-md = { path = "crates/tm20-md" }
 
 [workspace.lints.rust]
 unsafe_code = "deny"
