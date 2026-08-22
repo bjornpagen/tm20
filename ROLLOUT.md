@@ -95,7 +95,9 @@ pass the protocol-v1 compatibility fixture.
 
 Exit proofs:
 
-- message GUID plus bridge identity is stable across reconnect and backfill;
+- message IDs are scoped by stable bridge and message-store identities;
+- opaque event cursors recover from every push disconnect without being
+  confused with message identity;
 - REST backfill closes every WebSocket gap;
 - attachments, tapbacks, edits, and unsends fail closed when unsupported;
 - read receipts are idempotent and are emitted only after delivered paper;

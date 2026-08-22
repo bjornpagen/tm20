@@ -549,4 +549,25 @@ mod tests {
             3
         );
     }
+
+    #[test]
+    fn a_replaced_message_store_requires_rebootstrap() {
+        let mut http = MockHttp::new();
+        http.expect_json(HttpRequest::get("/v1/bridge"), 200, info())
+            .expect("info");
+        let mut connector = IMessageConnector::new(http);
+        let cursor = IMessageCursor {
+            bridge_id: "phone-1".into(),
+            store_id: "old-store".into(),
+            after: "cursor-0".into(),
+        };
+        assert!(matches!(
+            connector.pull(Some(&cursor)),
+            Err(ProviderError::Cursor { .. })
+        ));
+        assert_eq!(
+            connector.into_inner().finish().expect("transcript").len(),
+            1
+        );
+    }
 }

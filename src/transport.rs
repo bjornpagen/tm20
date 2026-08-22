@@ -57,10 +57,7 @@ impl HttpRequest {
         Self::json(HttpMethod::Post, path, body)
     }
 
-    pub fn put_json(
-        path: impl Into<String>,
-        body: impl Serialize,
-    ) -> Result<Self, TransportError> {
+    pub fn put_json(path: impl Into<String>, body: impl Serialize) -> Result<Self, TransportError> {
         Self::json(HttpMethod::Put, path, body)
     }
 

@@ -11,18 +11,22 @@ Public Firebase API shapes:
 - `GET /v0/topstories.json`
 - `GET /v0/item/{id}.json`
 
-Cursor: `{ max_item, ranked[] }`. `maxitem` supports outage recovery; rankings
-are a separate, bounded snapshot. Item ID is identity. Score, descendant
-count, deletion, and death contribute to revision events.
+Cursor: `{ max_item, ranked[], pending_null[] }`. `maxitem` supports outage
+recovery; rankings are a separate, bounded snapshot. An item endpoint may
+temporarily return JSON `null`, so its ID remains in `pending_null` until it
+materializes. Item ID is identity. Score, descendant count, deletion, and
+death contribute to revision events.
 
 ## Gmail
 
 - `GET /gmail/v1/users/me/profile`
 - `GET /gmail/v1/users/me/messages?labelIds=INBOX&maxResults=25`
-- `GET /gmail/v1/users/me/history?startHistoryId=…&historyTypes=messageAdded&labelId=INBOX`
-- `GET /gmail/v1/users/me/messages/{id}?format=metadata&metadataHeaders=…`
+- `GET /gmail/v1/users/me/history?startHistoryId=…&maxResults=500`
+  with repeated `historyTypes` for message added/deleted and label
+  added/removed
+- `GET /gmail/v1/users/me/messages/{id}?format=METADATA&metadataHeaders=…`
 - `POST /gmail/v1/users/me/messages/{id}/modify`
-  with `{ "removeLabelIds": ["UNREAD"] }`
+  with `{ "removeLabelIds": ["UNREAD"], "addLabelIds": [] }`
 
 Cursor: mailbox `historyId`. Message ID and thread ID remain distinct. An
 expired history cursor is represented as a provider failure requiring bounded
@@ -57,21 +61,27 @@ Recovery:
 `GET /api/conversations.history?channel=…&oldest=…&inclusive=false&limit=200`
 
 Cursor: one `(channel, timestamp)` watermark per selected conversation.
-Socket events wake the connector; history closes gaps. `event_id` deduplicates
-delivery while `(team, channel, ts)` identifies a message.
+Socket events wake the connector; history closes posted-message gaps.
+Posted, changed, and deleted events are distinct wire variants; edits retain
+the original message timestamp while using `edited.ts` as revision identity.
+`event_id` deduplicates transport delivery while `(team, channel, ts)`
+identifies a message. Slack history does not guarantee recovery of missed
+edits or deletions; the scaffold exposes that limitation rather than claiming
+exact reconciliation.
 
 ## Google Chat
 
 `GET /chat/v1/{space}/spaceEvents` with:
 
-- `filter=eventTime > "{RFC3339 watermark}"`
+- bounded `startTime`/`endTime` filter with a 60-second overlap
 - created/updated/deleted message event types
-- `pageSize=1000`
+- `pageSize=100`
 - `pageToken` while paginating
 
-Cursor: one overlapped event-time watermark per selected space. Event resource
-name identifies delivery; full message and thread resource names identify
-objects. No read-state writeback is advertised.
+Cursor: the completed `endTime` per selected space. Single and batch payloads
+flatten to one observation per message, keyed by event and message resource
+names. Full message and thread resource names identify objects. No read-state
+writeback is advertised.
 
 ## iMessage bridge protocol v1
 
@@ -79,12 +89,14 @@ This protocol is invented for the separately implemented bridge.
 
 ### Discovery
 
-`GET /bridge/v1/info`
+`GET /v1/bridge`
 
 ```json
 {
   "bridge_id": "phone-1",
+  "store_id": "store-1",
   "protocol_version": 1,
+  "event_head": "cursor-42",
   "capabilities": [
     "event_backfill",
     "push_events",
@@ -94,23 +106,23 @@ This protocol is invented for the separately implemented bridge.
 }
 ```
 
-Changing `bridge_id` invalidates the cursor instead of silently joining two
-message histories.
+Changing either `bridge_id` or `store_id` invalidates the cursor instead of
+silently joining two message-store generations.
 
 ### Recovery
 
-`GET /bridge/v1/events?after={sequence}&limit=500`
+`GET /v1/events?after={opaque_cursor}&limit=500`
 
 ```json
 {
   "events": [],
-  "next_sequence": 42,
+  "next_cursor": "cursor-42",
   "has_more": false
 }
 ```
 
-Every event has monotonic `sequence`, stable `event_id`, RFC3339
-`occurred_at`, and one tagged variant:
+Every event has an opaque ordered `cursor`, stable `event_id`, signed
+`occurred_at_ms`, and one tagged variant:
 
 - `message_created`
 - `message_edited`
@@ -125,12 +137,12 @@ backfill is authoritative.
 
 ### Read receipt
 
-`POST /bridge/v1/conversations/{conversation_id}/read-receipts`
+`PUT /v1/read-receipts/{64-lowercase-hex-idempotency-key}`
 
 ```json
 {
-  "through_message_id": "msg-1",
-  "idempotency_key": "64 lowercase hex characters"
+  "conversation_id": "chat-1",
+  "through_message_id": "msg-1"
 }
 ```
 
@@ -140,7 +152,7 @@ Response:
 {
   "receipt_id": "receipt-1",
   "status": "applied",
-  "applied_at": "2026-08-22T15:01:00Z"
+  "applied_at_ms": 1776527260000
 }
 ```
 

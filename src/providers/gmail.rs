@@ -156,7 +156,7 @@ pub struct GmailEvent {
     pub change: GmailChange,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "type", content = "labels", rename_all = "snake_case")]
 pub enum GmailChange {
     Added,
@@ -581,5 +581,17 @@ mod tests {
             connector.into_inner().finish().expect("transcript").len(),
             3
         );
+    }
+
+    #[test]
+    fn unread_label_removal_is_a_read_state_observation() {
+        let observation: NormalizedObservation = GmailEvent {
+            account: GmailAccount::parse("me@example.com").expect("account"),
+            history_id: "102".into(),
+            message: message(),
+            change: GmailChange::LabelsRemoved(vec!["UNREAD".into()]),
+        }
+        .into();
+        assert_eq!(observation.kind, ObservationKind::ReadStateChanged);
     }
 }

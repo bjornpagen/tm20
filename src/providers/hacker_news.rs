@@ -296,4 +296,34 @@ mod tests {
             4
         );
     }
+
+    #[test]
+    fn null_items_remain_in_the_durable_retry_set() {
+        let mut http = MockHttp::new();
+        http.expect_json(HttpRequest::get("/v0/maxitem.json"), 200, 42u64)
+            .expect("maxitem");
+        http.expect_json(HttpRequest::get("/v0/topstories.json"), 200, vec![42u64])
+            .expect("top");
+        http.expect_json(
+            HttpRequest::get("/v0/item/41.json"),
+            200,
+            Option::<HnItem>::None,
+        )
+        .expect("pending null");
+        http.expect_json(
+            HttpRequest::get("/v0/item/42.json"),
+            200,
+            Some(item(42, "New story")),
+        )
+        .expect("42");
+        let cursor = HnCursor {
+            max_item: 40,
+            ranked: vec![40],
+            pending_null: vec![41],
+        };
+        let mut connector = HackerNewsConnector::new(http);
+        let batch = connector.pull(Some(&cursor)).expect("pull");
+        assert_eq!(batch.observations.len(), 1);
+        assert_eq!(batch.next_cursor.pending_null, vec![41]);
+    }
 }

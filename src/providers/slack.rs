@@ -159,7 +159,7 @@ impl SlackMessageEvent {
         match self {
             Self::Posted(event) => &event.ts,
             Self::Changed(event) => &event.message.edited.ts,
-            Self::Deleted(event) => self.event_timestamp(),
+            Self::Deleted(_) => self.event_timestamp(),
         }
     }
 }
@@ -205,8 +205,8 @@ pub struct SlackEvent {
 
 impl From<SlackEvent> for NormalizedObservation {
     fn from(event: SlackEvent) -> Self {
-        let payload =
-            serde_json::to_vec(&(&event.message, &event.event_id)).expect("Slack event is JSON-safe");
+        let payload = serde_json::to_vec(&(&event.message, &event.event_id))
+            .expect("Slack event is JSON-safe");
         let channel = event.message.channel();
         let object_timestamp = event.message.object_timestamp();
         let thread = event.message.thread_timestamp();
@@ -255,6 +255,15 @@ fn slack_millis(timestamp: &str) -> i64 {
         .parse::<i64>()
         .unwrap_or_default();
     seconds.saturating_mul(1_000) + micros / 1_000
+}
+
+fn ordered_watermarks(watermarks: HashMap<String, String>) -> Vec<SlackWatermark> {
+    let mut watermarks: Vec<SlackWatermark> = watermarks
+        .into_iter()
+        .map(|(channel, timestamp)| SlackWatermark { channel, timestamp })
+        .collect();
+    watermarks.sort_by(|a, b| a.channel.cmp(&b.channel));
+    watermarks
 }
 
 #[derive(Debug)]
@@ -401,11 +410,7 @@ where
                     });
                 }
                 for message in response.messages {
-                    let key = (
-                        channel.to_string(),
-                        message.ts.clone(),
-                        message.ts.clone(),
-                    );
+                    let key = (channel.to_string(), message.ts.clone(), message.ts.clone());
                     if seen_messages.insert(key) {
                         let event_id = format!("history:{}:{}", channel, message.ts);
                         watermarks
@@ -437,14 +442,11 @@ where
                 }
             }
         }
-        let mut watermarks: Vec<SlackWatermark> = watermarks
-            .into_iter()
-            .map(|(channel, timestamp)| SlackWatermark { channel, timestamp })
-            .collect();
-        watermarks.sort_by(|a, b| a.channel.cmp(&b.channel));
         Ok(TypedPullBatch {
             observations,
-            next_cursor: SlackCursor { watermarks },
+            next_cursor: SlackCursor {
+                watermarks: ordered_watermarks(watermarks),
+            },
         })
     }
 
@@ -502,5 +504,48 @@ mod tests {
             connector.into_inner().finish().expect("transcript").len(),
             1
         );
+    }
+
+    #[test]
+    fn edits_keep_message_identity_and_change_event_identity() {
+        let posted: NormalizedObservation = SlackEvent {
+            event_id: "Ev-post".into(),
+            team_id: "T1".into(),
+            message: SlackMessageEvent::Posted(SlackPostedEvent {
+                event_type: "message".into(),
+                channel: "C1".into(),
+                user: "U1".into(),
+                text: "before".into(),
+                ts: "1700000000.000100".into(),
+                thread_ts: String::new(),
+                event_ts: "1700000000.000100".into(),
+            }),
+        }
+        .into();
+        let changed: NormalizedObservation = SlackEvent {
+            event_id: "Ev-edit".into(),
+            team_id: "T1".into(),
+            message: SlackMessageEvent::Changed(SlackChangedEvent {
+                event_type: "message".into(),
+                subtype: "message_changed".into(),
+                channel: "C1".into(),
+                ts: "1700000001.000000".into(),
+                event_ts: "1700000001.000000".into(),
+                message: SlackChangedMessage {
+                    user: "U1".into(),
+                    text: "after".into(),
+                    ts: "1700000000.000100".into(),
+                    thread_ts: String::new(),
+                    edited: SlackEdited {
+                        user: "U1".into(),
+                        ts: "1700000001.000000".into(),
+                    },
+                },
+            }),
+        }
+        .into();
+        assert_eq!(posted.object, changed.object);
+        assert_ne!(posted.event, changed.event);
+        assert_eq!(changed.kind, ObservationKind::Updated);
     }
 }

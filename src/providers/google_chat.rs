@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use time::{Duration, OffsetDateTime};
 use time::format_description::well_known::Rfc3339;
+use time::{Duration, OffsetDateTime};
 
 use crate::connector::{
     Capability, ConnectorDescriptor, ConnectorError, ConnectorKey, CursorCodec, CursorToken,
@@ -315,25 +315,30 @@ mod tests {
 
     #[test]
     fn space_events_are_the_recovery_contract() {
+        let first = ChatMessage {
+            name: "spaces/AAA/messages/1".into(),
+            thread: ChatThread {
+                name: "spaces/AAA/threads/1".into(),
+            },
+            sender: ChatUser {
+                name: "users/1".into(),
+                display_name: "Ada".into(),
+            },
+            create_time: "2026-08-22T15:00:00Z".into(),
+            last_update_time: "2026-08-22T15:00:00Z".into(),
+            text: "Build is green".into(),
+            argument_text: String::new(),
+        };
+        let second = ChatMessage {
+            name: "spaces/AAA/messages/2".into(),
+            ..first.clone()
+        };
         let event = ChatSpaceEvent {
             name: "spaces/AAA/spaceEvents/1".into(),
             event_time: "2026-08-22T15:00:00Z".into(),
             event_type: "google.workspace.chat.message.v1.created".into(),
-            payload: ChatEventPayload::Single {
-                message: ChatMessage {
-                name: "spaces/AAA/messages/1".into(),
-                thread: ChatThread {
-                    name: "spaces/AAA/threads/1".into(),
-                },
-                sender: ChatUser {
-                    name: "users/1".into(),
-                    display_name: "Ada".into(),
-                },
-                create_time: "2026-08-22T15:00:00Z".into(),
-                last_update_time: "2026-08-22T15:00:00Z".into(),
-                text: "Build is green".into(),
-                argument_text: String::new(),
-                },
+            payload: ChatEventPayload::Batch {
+                messages: vec![first, second],
             },
         };
         let mut http = MockHttp::new();
@@ -354,15 +359,10 @@ mod tests {
             },
         )
         .expect("events");
-        let mut connector = GoogleChatConnector::new(
-            http,
-            "users/me",
-            ["spaces/AAA"],
-            poll_end,
-        )
-        .expect("connector");
+        let mut connector = GoogleChatConnector::new(http, "users/me", ["spaces/AAA"], poll_end)
+            .expect("connector");
         let batch = connector.pull(None).expect("pull");
-        assert_eq!(batch.observations.len(), 1);
+        assert_eq!(batch.observations.len(), 2);
         assert_eq!(batch.next_cursor.watermarks.len(), 1);
         assert_eq!(batch.next_cursor.watermarks[0].event_time, poll_end);
         assert_eq!(
