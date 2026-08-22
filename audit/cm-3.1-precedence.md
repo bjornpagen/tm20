@@ -1,7 +1,8 @@
 # Precedence
 
 - Spec: https://spec.commonmark.org/0.31.2/#precedence
-- Status: **unproven**
+- Status: **keep**
+- Corpus: `cm-3.1-a-precedence`
 - Walk: block vs inline precedence is entirely comrak. The walk consumes the AST it is given.
-- Proof: none dedicated (list/quote/code tests assume comrak’s choices)
-- Later do: one fixture where a list marker in a paragraph stays text, matching the spec example.
+- Proof: golden `cm-3.1-a-precedence`.
+- Later do: none.

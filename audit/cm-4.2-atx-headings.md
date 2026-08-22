@@ -1,7 +1,8 @@
 # ATX headings
 
 - Spec: https://spec.commonmark.org/0.31.2/#atx-headings
-- Status: **gap**
+- Status: **keep**
+- Corpus: `cm-4.2-a-atx-levels`, `cm-4.2-b-atx-forms`, `cm-4.2-c-atx-flatten`
 - Walk: `heading`: math in a heading is `Error::Math`. Inlines flatten to a string (`flatten`). Level `<= 1` → `Frame::Mark` at 18 pt. Any other level → `Frame::Head` at 11 pt. Levels 3–6 are the same Head as level 2. Closing hashes are stripped by comrak.
-- Proof: `spec.rs::atx_and_setext`, `heading_inlines_flatten`, `math_in_a_heading_is_an_error`; fixture `02-heads.md`. No h3–h6 proof.
-- Later do: either document collapse as never, or give h3–h6 a representable size.
+- Proof: goldens `cm-4.2-a-atx-levels` (one masthead, five identical bold heads), `cm-4.2-b-atx-forms`, `cm-4.2-c-atx-flatten`; `spec.rs` heading facts; fixture `02-heads.md`.
+- Later do: none. Levels 3–6 collapsing to Head is the dialect — there is no size ladder.

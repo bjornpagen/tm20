@@ -8,10 +8,15 @@ construct.
 
 ## Status
 
-- **keep** — lowered, and a test or fixture owns the fact
+- **keep** — lowered, and a test, fixture, or snap golden owns the fact
 - **never** — unrepresentable on purpose
 - **unproven** — comrak + walk likely handle it; no dedicated test
 - **gap** — errors, drops, or collapses in a way that is not an explicit never
+
+Each construct file has a `Corpus:` line naming the snap stems in
+`crates/tm20-md/tests/corpus/` (and `reject/` where the fact is a hard
+error). Band-split and pair-matrix stems (`set-*`, `doc-*`) live only
+in the snap suite; they have no audit file.
 
 ## CommonMark
 
