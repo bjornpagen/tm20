@@ -10,6 +10,8 @@ use std::fmt;
 use tm20::Command;
 use tm20_set::{FaceTable, Measure};
 
+use crate::policy::Privacy;
+
 pub const MAX_TAPE_DOTS: u32 = 800;
 pub const MAX_DIGEST_ITEMS: usize = 7;
 const BODY_LINE_DOTS: u32 = 37;
@@ -25,7 +27,10 @@ pub struct PaperText(String);
 impl PaperText {
     pub fn parse(input: impl AsRef<str>) -> Result<Self, PaperError> {
         let input = input.as_ref();
-        if input.chars().any(|ch| ch == '\0' || (ch.is_control() && !ch.is_whitespace())) {
+        if input
+            .chars()
+            .any(|ch| ch == '\0' || (ch.is_control() && !ch.is_whitespace()))
+        {
             return Err(PaperError::ControlCharacter);
         }
         let normalized = input.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -35,8 +40,66 @@ impl PaperText {
         Ok(Self(normalized))
     }
 
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SourceCopy {
+    Subject(PaperText),
+    SubjectAndExcerpt {
+        subject: PaperText,
+        excerpt: PaperText,
+    },
+}
+
+impl SourceCopy {
+    pub fn metadata(subject: impl AsRef<str>) -> Result<Self, PaperError> {
+        Ok(Self::Subject(PaperText::parse(subject)?))
+    }
+
+    pub fn excerpt(subject: impl AsRef<str>, excerpt: impl AsRef<str>) -> Result<Self, PaperError> {
+        Ok(Self::SubjectAndExcerpt {
+            subject: PaperText::parse(subject)?,
+            excerpt: PaperText::parse(excerpt)?,
+        })
+    }
+
+    pub fn project(self, privacy: Privacy) -> Result<ProjectedCopy, PaperError> {
+        let text = match (privacy, self) {
+            (
+                Privacy::MetadataOnly,
+                Self::Subject(subject) | Self::SubjectAndExcerpt { subject, .. },
+            ) => subject,
+            (
+                Privacy::RedactedExcerpt | Privacy::FullExcerpt,
+                Self::SubjectAndExcerpt { excerpt, .. },
+            ) => excerpt,
+            (Privacy::RedactedExcerpt | Privacy::FullExcerpt, Self::Subject(_)) => {
+                return Err(PaperError::MissingExcerpt(privacy));
+            }
+        };
+        Ok(ProjectedCopy { privacy, text })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectedCopy {
+    privacy: Privacy,
+    text: PaperText,
+}
+
+impl ProjectedCopy {
+    #[must_use]
+    pub const fn privacy(&self) -> Privacy {
+        self.privacy
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        self.text.as_str()
     }
 }
 
@@ -67,7 +130,7 @@ pub struct DigestItem {
     source: PaperText,
     sender: PaperText,
     age: PaperText,
-    summary: PaperText,
+    summary: ProjectedCopy,
     updates: u32,
 }
 
@@ -77,7 +140,7 @@ impl DigestItem {
         source: impl AsRef<str>,
         sender: impl AsRef<str>,
         age: impl AsRef<str>,
-        summary: impl AsRef<str>,
+        summary: ProjectedCopy,
         updates: u32,
     ) -> Result<Self, PaperError> {
         Ok(Self {
@@ -85,7 +148,7 @@ impl DigestItem {
             source: PaperText::parse(source)?,
             sender: PaperText::parse(sender)?,
             age: PaperText::parse(age)?,
-            summary: PaperText::parse(summary)?,
+            summary,
             updates,
         })
     }
@@ -133,7 +196,7 @@ pub struct Interrupt {
     source: PaperText,
     sender: PaperText,
     age: PaperText,
-    summary: PaperText,
+    summary: ProjectedCopy,
     id: PaperText,
 }
 
@@ -143,7 +206,7 @@ impl Interrupt {
         source: impl AsRef<str>,
         sender: impl AsRef<str>,
         age: impl AsRef<str>,
-        summary: impl AsRef<str>,
+        summary: ProjectedCopy,
         id: impl AsRef<str>,
     ) -> Result<Self, PaperError> {
         Ok(Self {
@@ -151,7 +214,7 @@ impl Interrupt {
             source: PaperText::parse(source)?,
             sender: PaperText::parse(sender)?,
             age: PaperText::parse(age)?,
-            summary: PaperText::parse(summary)?,
+            summary,
             id: PaperText::parse(id)?,
         })
     }
@@ -184,6 +247,7 @@ impl TapeBudget {
     }
 }
 
+#[must_use]
 pub fn render_digest(digest: &Digest) -> RenderedEdition {
     let mut budget = TapeBudget::new(MASTHEAD_DOTS + RULE_DOTS + FOOTER_DOTS);
     let mut markdown = format!("# {}\n\n---\n", escape_markdown(digest.title.as_str()));
@@ -329,7 +393,7 @@ fn graphics_height(document: &tm20::Document) -> u32 {
 
 fn wrapped_lines(text: &str) -> u32 {
     let len = text.chars().count().max(1);
-    len.div_ceil(CHARS_PER_LINE) as u32
+    u32::try_from(len.div_ceil(CHARS_PER_LINE)).unwrap_or(u32::MAX)
 }
 
 fn escape_markdown(text: &str) -> String {
@@ -350,6 +414,7 @@ fn escape_markdown(text: &str) -> String {
 pub enum PaperError {
     EmptyText,
     ControlCharacter,
+    MissingExcerpt(Privacy),
     TotalBelowItems { total: usize, items: usize },
     TooTall { height: u32, limit: u32 },
     Markdown(tm20_md::Error),
@@ -362,8 +427,14 @@ impl fmt::Display for PaperError {
         match self {
             Self::EmptyText => f.write_str("paper text is empty"),
             Self::ControlCharacter => f.write_str("paper text contains a control character"),
+            Self::MissingExcerpt(privacy) => {
+                write!(f, "{privacy:?} requires an excerpt-bearing source value")
+            }
             Self::TotalBelowItems { total, items } => {
-                write!(f, "digest total {total} is below its {items} supplied items")
+                write!(
+                    f,
+                    "digest total {total} is below its {items} supplied items"
+                )
             }
             Self::TooTall { height, limit } => {
                 write!(f, "edition is {height} dots tall; limit is {limit}")
@@ -383,6 +454,7 @@ impl Error for PaperError {
             Self::Encode(error) => Some(error),
             Self::EmptyText
             | Self::ControlCharacter
+            | Self::MissingExcerpt(_)
             | Self::TotalBelowItems { .. }
             | Self::TooTall { .. } => None,
         }
@@ -394,22 +466,19 @@ mod tests {
     use super::*;
 
     fn item(section: Section, n: usize) -> DigestItem {
-        DigestItem::parse(
-            section,
-            "Gmail",
-            format!("sender {n}"),
-            "2m",
+        let copy = SourceCopy::excerpt(
+            "Notification",
             "A bounded summary that fits the narrow tape and contains no source markup.",
-            1,
         )
-        .expect("item")
+        .expect("source copy")
+        .project(Privacy::RedactedExcerpt)
+        .expect("projected copy");
+        DigestItem::parse(section, "Gmail", format!("sender {n}"), "2m", copy, 1).expect("item")
     }
 
     #[test]
     fn a_digest_is_bounded_and_names_its_overflow() {
-        let items = (0..12)
-            .map(|n| item(Section::Mail, n))
-            .collect::<Vec<_>>();
+        let items = (0..12).map(|n| item(Section::Mail, n)).collect::<Vec<_>>();
         let digest = Digest::parse("Now · 12:30", "D-0042", items, 12).expect("digest");
         let rendered = render_digest(&digest);
         assert!(rendered.estimated_height_dots <= MAX_TAPE_DOTS);
@@ -420,15 +489,12 @@ mod tests {
 
     #[test]
     fn source_markup_is_data_not_markdown() {
-        let interrupt = Interrupt::parse(
-            "Now",
-            "<script>",
-            "**Mallory**",
-            "now",
-            "<div>do not parse me</div>",
-            "I-1",
-        )
-        .expect("interrupt");
+        let copy = SourceCopy::excerpt("Private", "<div>do not parse me</div>")
+            .expect("source copy")
+            .project(Privacy::RedactedExcerpt)
+            .expect("projected copy");
+        let interrupt = Interrupt::parse("Now", "<script>", "**Mallory**", "now", copy, "I-1")
+            .expect("interrupt");
         let rendered = render_interrupt(&interrupt).expect("render");
         tm20_md::sheet(&rendered.markdown, Measure::TAPE, |_| {
             Err(tm20_md::Error::Image)
@@ -442,6 +508,21 @@ mod tests {
         assert!(matches!(
             Digest::parse("Now", "D-1", vec![item(Section::Mail, 1)], 0),
             Err(PaperError::TotalBelowItems { .. })
+        ));
+    }
+
+    #[test]
+    fn privacy_is_a_projection_not_a_render_time_flag() {
+        let metadata = SourceCopy::excerpt("Subject only", "private body")
+            .expect("source")
+            .project(Privacy::MetadataOnly)
+            .expect("metadata");
+        assert_eq!(metadata.as_str(), "Subject only");
+        assert!(matches!(
+            SourceCopy::metadata("Subject only")
+                .expect("source")
+                .project(Privacy::RedactedExcerpt),
+            Err(PaperError::MissingExcerpt(Privacy::RedactedExcerpt))
         ));
     }
 }

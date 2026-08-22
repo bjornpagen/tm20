@@ -171,11 +171,12 @@ impl PolicyTable {
             }
             if rule.lane == Lane::Interrupt {
                 match rule.source {
-                    SourceSelector::Class(SourceClass::Mail)
-                    | SourceSelector::Class(SourceClass::WorkspaceChat)
-                    | SourceSelector::Class(SourceClass::PersonalMessaging) => {}
-                    SourceSelector::Any
-                    | SourceSelector::Class(SourceClass::PublicFeed) => {
+                    SourceSelector::Class(
+                        SourceClass::Mail
+                        | SourceClass::WorkspaceChat
+                        | SourceClass::PersonalMessaging,
+                    ) => {}
+                    SourceSelector::Any | SourceSelector::Class(SourceClass::PublicFeed) => {
                         return Err(PolicyError::UnsafeInterrupt(rule.key));
                     }
                 }
@@ -184,8 +185,7 @@ impl PolicyTable {
                 }
             }
             if rule.privacy == Privacy::FullExcerpt
-                && (rule.trust != TrustSelector::TrustedOnly
-                    || rule.source == SourceSelector::Any)
+                && (rule.trust != TrustSelector::TrustedOnly || rule.source == SourceSelector::Any)
             {
                 return Err(PolicyError::UnsafeFullExcerpt(rule.key));
             }
@@ -226,6 +226,7 @@ impl PolicyTable {
         Ok(Self { routes, effects })
     }
 
+    #[must_use]
     pub fn route(&self, candidate: Candidate) -> RouteDecision {
         let rule = self
             .routes
@@ -258,6 +259,7 @@ const DIRECT_OR_SECURITY: &[Signal] = &[Signal::DirectMessage, Signal::Security]
 const MENTION_OR_DIRECT: &[Signal] = &[Signal::Mention, Signal::DirectMessage];
 const INTERRUPT_LANES: &[Lane] = &[Lane::Interrupt, Lane::NextDigest];
 
+#[must_use]
 pub fn default_policy() -> PolicyTable {
     PolicyTable::parse(
         vec![
@@ -381,7 +383,10 @@ impl fmt::Display for PolicyError {
                 write!(f, "route precedence {value} is duplicated")
             }
             Self::UnsafeInterrupt(key) => {
-                write!(f, "route rule {key:?} may interrupt for a public or unknown source")
+                write!(
+                    f,
+                    "route rule {key:?} may interrupt for a public or unknown source"
+                )
             }
             Self::InterruptDuringQuietHours(key) => {
                 write!(f, "route rule {key:?} may interrupt during quiet hours")
@@ -390,7 +395,10 @@ impl fmt::Display for PolicyError {
                 write!(f, "route rule {key:?} may expose an untrusted full excerpt")
             }
             Self::FallbackCount(count) => {
-                write!(f, "policy must have exactly one total fallback, found {count}")
+                write!(
+                    f,
+                    "policy must have exactly one total fallback, found {count}"
+                )
             }
             Self::FallbackNotLast => f.write_str("the total fallback is not last"),
             Self::DuplicateEffectRule(key) => {

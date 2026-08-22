@@ -22,12 +22,14 @@ pub use connector::{
     TypedPullBatch,
 };
 pub use delivery::{
-    Ambiguous, Attempt, AttemptId, Delivered, DeliveryError, DeliveryMachine, Encoded, Failed,
-    Planned, ReprintPlan, ReprintReason, Transmitting, UpstreamEffect,
+    Ambiguous, AppliedEffect, Attempt, AttemptId, Delivered, DeliveryError, DeliveryMachine,
+    Encoded, Failed, FailedEffect, Planned, ReprintPlan, ReprintReason, Transmitting,
+    UpstreamEffect,
 };
 pub use paper::{
     CompiledEdition, Digest, DigestItem, Interrupt, MAX_DIGEST_ITEMS, MAX_TAPE_DOTS, PaperError,
-    PaperText, RenderedEdition, Section, compile, render_digest, render_interrupt,
+    PaperText, ProjectedCopy, RenderedEdition, Section, SourceCopy, compile, render_digest,
+    render_interrupt,
 };
 pub use policy::{
     Candidate, EffectRule, InterruptionWindow, Lane, PolicyError, PolicyTable, Privacy,

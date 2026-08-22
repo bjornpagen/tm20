@@ -1,7 +1,14 @@
 use paper_attention_router::{
-    Digest, DigestItem, Interrupt, MAX_TAPE_DOTS, render_digest, render_interrupt,
+    Digest, DigestItem, Interrupt, MAX_TAPE_DOTS, Privacy, ProjectedCopy, Section, SourceCopy,
+    render_digest, render_interrupt,
 };
-use paper_attention_router::paper::Section;
+
+fn excerpt(subject: &str, text: &str) -> ProjectedCopy {
+    SourceCopy::excerpt(subject, text)
+        .expect("source copy")
+        .project(Privacy::RedactedExcerpt)
+        .expect("projected copy")
+}
 
 #[test]
 fn interrupt_specimen_is_locked() {
@@ -10,7 +17,7 @@ fn interrupt_specimen_is_locked() {
         "iMessage",
         "Ada",
         "now",
-        "Can you call when the train arrives?",
+        excerpt("Message", "Can you call when the train arrives?"),
         "I-0001",
     )
     .expect("valid interrupt");
@@ -30,7 +37,7 @@ fn digest_specimen_is_locked() {
             "iMessage",
             "Ada",
             "2m",
-            "Train reaches Central at 12:48.",
+            excerpt("Message", "Train reaches Central at 12:48."),
             1,
         )
         .expect("people"),
@@ -39,7 +46,7 @@ fn digest_specimen_is_locked() {
             "Slack",
             "buildbot",
             "4m",
-            "Main is green after the parser change.",
+            excerpt("Thread", "Main is green after the parser change."),
             3,
         )
         .expect("work"),
@@ -48,7 +55,7 @@ fn digest_specimen_is_locked() {
             "Gmail",
             "Bank",
             "10m",
-            "Statement available; no action due.",
+            excerpt("Statement", "Statement available; no action due."),
             1,
         )
         .expect("mail"),
@@ -57,7 +64,7 @@ fn digest_specimen_is_locked() {
             "HN",
             "item 412",
             "32m",
-            "A careful thread on typed plugins.",
+            excerpt("Story", "A careful thread on typed plugins."),
             1,
         )
         .expect("network"),

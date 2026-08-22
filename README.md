@@ -18,6 +18,8 @@ defines the stable part first:
 ## Doctrine
 
 The representation determines the control flow.
+[`REPRESENTATION-FIRST.md`](REPRESENTATION-FIRST.md) is the governing
+engineering document.
 
 - A provider event is an `Observation`, not yet a notification.
 - A `Notice` is an explicit routing decision.
@@ -81,7 +83,8 @@ and no unsafe full-excerpt rule.
 | iMessage | bridge + message GUID | SMServer WebSocket | read receipt |
 
 The sequence is synthetic fixtures, Hacker News, Gmail, Slack, Google Chat,
-then the version-fragile jailbroken-phone bridge.
+then the version-fragile jailbroken-phone bridge. Each stage's proof gate is
+specified in [`ROLLOUT.md`](ROLLOUT.md).
 
 ## Verification
 

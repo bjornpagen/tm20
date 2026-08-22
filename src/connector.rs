@@ -41,6 +41,7 @@ pub enum Capability {
 pub struct ConnectorKey(&'static str);
 
 impl ConnectorKey {
+    #[must_use]
     pub const fn new(key: &'static str) -> Self {
         assert!(!key.is_empty(), "connector key is empty");
         let bytes = key.as_bytes();
@@ -56,6 +57,7 @@ impl ConnectorKey {
         Self(key)
     }
 
+    #[must_use]
     pub const fn as_str(self) -> &'static str {
         self.0
     }
@@ -76,9 +78,9 @@ pub struct ConnectorDescriptor {
 }
 
 impl ConnectorDescriptor {
+    #[must_use]
     pub fn supports(self, verb: EffectVerb) -> bool {
-        self.capabilities
-            .contains(&Capability::Effect(verb))
+        self.capabilities.contains(&Capability::Effect(verb))
     }
 }
 
@@ -94,6 +96,7 @@ impl CursorToken {
         Ok(Self(bytes))
     }
 
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
@@ -179,10 +182,12 @@ pub trait Connector: Send {
 pub struct ErasedConnector<C>(C);
 
 impl<C> ErasedConnector<C> {
+    #[must_use]
     pub fn new(connector: C) -> Self {
         Self(connector)
     }
 
+    #[must_use]
     pub fn into_inner(self) -> C {
         self.0
     }
@@ -229,6 +234,7 @@ pub struct ConnectorRegistry {
 }
 
 impl ConnectorRegistry {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -240,10 +246,7 @@ impl ConnectorRegistry {
         self.register_erased(Box::new(ErasedConnector::new(connector)))
     }
 
-    pub fn register_erased(
-        &mut self,
-        connector: Box<dyn Connector>,
-    ) -> Result<(), ConnectorError> {
+    pub fn register_erased(&mut self, connector: Box<dyn Connector>) -> Result<(), ConnectorError> {
         let key = connector.descriptor().key;
         if self
             .connectors
@@ -311,9 +314,7 @@ impl fmt::Display for ConnectorError {
             Self::UnsupportedEffect { connector, verb } => {
                 write!(f, "connector {connector} does not support {verb:?}")
             }
-            Self::EffectForAnotherProvider => {
-                f.write_str("effect belongs to another provider")
-            }
+            Self::EffectForAnotherProvider => f.write_str("effect belongs to another provider"),
             Self::Provider { connector, message } => {
                 write!(f, "connector {connector}: {message}")
             }
@@ -426,9 +427,7 @@ mod tests {
         registry.register(MailConnector).expect("register");
         let connector = registry.connector_mut(KEY).expect("lookup");
         let first = connector.pull(None).expect("pull");
-        let second = connector
-            .pull(Some(&first.next_cursor))
-            .expect("reconcile");
+        let second = connector.pull(Some(&first.next_cursor)).expect("reconcile");
         assert_eq!(MailCursor::decode(&second.next_cursor), Ok(MailCursor(2)));
     }
 

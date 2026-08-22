@@ -3,9 +3,7 @@
 //! This is product data, not runtime branching. A connector implementation
 //! must agree with its row before registration.
 
-use crate::connector::{
-    Capability, ConnectorDescriptor, ConnectorKey, EffectVerb, SourceClass,
-};
+use crate::connector::{Capability, ConnectorDescriptor, ConnectorKey, EffectVerb, SourceClass};
 
 const RECONCILE: &[Capability] = &[Capability::Reconcile];
 const GMAIL_CAPABILITIES: &[Capability] = &[
@@ -54,6 +52,7 @@ pub struct ConnectorPlan {
 }
 
 impl BuiltinConnector {
+    #[must_use]
     pub const fn plan(self) -> ConnectorPlan {
         match self {
             Self::HackerNews => ConnectorPlan {
@@ -136,6 +135,7 @@ pub enum RolloutStage {
     Connector(BuiltinConnector),
 }
 
+#[must_use]
 pub const fn rollout() -> [RolloutStage; 6] {
     [
         RolloutStage::SyntheticFoundation,

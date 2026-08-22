@@ -60,30 +60,36 @@ pub struct Attempt<S> {
 }
 
 impl Attempt<Planned> {
+    #[must_use]
     pub fn encoded(self, at: UnixMillis, payload: ExternalKey) -> Attempt<Encoded> {
         self.map(Encoded { at, payload })
     }
 
+    #[must_use]
     pub fn failed(self, at: UnixMillis, detail: ExternalKey) -> Attempt<Failed> {
         self.map(Failed { at, detail })
     }
 }
 
 impl Attempt<Encoded> {
+    #[must_use]
     pub fn transmitting(self, at: UnixMillis) -> Attempt<Transmitting> {
         self.map(Transmitting { at })
     }
 
+    #[must_use]
     pub fn failed(self, at: UnixMillis, detail: ExternalKey) -> Attempt<Failed> {
         self.map(Failed { at, detail })
     }
 }
 
 impl Attempt<Transmitting> {
+    #[must_use]
     pub fn delivered(self, at: UnixMillis) -> Attempt<Delivered> {
         self.map(Delivered { at })
     }
 
+    #[must_use]
     pub fn ambiguous(self, at: UnixMillis, detail: ExternalKey) -> Attempt<Ambiguous> {
         self.map(Ambiguous { at, detail })
     }
@@ -106,6 +112,40 @@ pub struct UpstreamEffect {
     pub request: EffectRequest,
 }
 
+impl UpstreamEffect {
+    #[must_use]
+    pub fn applied(self, at: UnixMillis, receipt: ExternalKey) -> AppliedEffect {
+        AppliedEffect {
+            effect: self,
+            at,
+            receipt,
+        }
+    }
+
+    #[must_use]
+    pub fn failed(self, at: UnixMillis, detail: ExternalKey) -> FailedEffect {
+        FailedEffect {
+            effect: self,
+            at,
+            detail,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppliedEffect {
+    pub effect: UpstreamEffect,
+    pub at: UnixMillis,
+    pub receipt: ExternalKey,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FailedEffect {
+    pub effect: UpstreamEffect,
+    pub at: UnixMillis,
+    pub detail: ExternalKey,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReprintReason {
     AfterFailure,
@@ -124,6 +164,7 @@ pub struct ReprintPlan {
 pub struct DeliveryMachine;
 
 impl DeliveryMachine {
+    #[must_use]
     pub fn plan(
         id: AttemptId,
         edition: EditionId,
@@ -138,6 +179,7 @@ impl DeliveryMachine {
         }
     }
 
+    #[must_use]
     pub fn release_effect(
         delivered: &Attempt<Delivered>,
         idempotency: ExternalKey,
@@ -154,6 +196,7 @@ impl DeliveryMachine {
         }
     }
 
+    #[must_use]
     pub fn reprint_after_failure(
         original: &Attempt<Failed>,
         id: AttemptId,
@@ -170,6 +213,7 @@ impl DeliveryMachine {
         )
     }
 
+    #[must_use]
     pub fn reprint_after_ambiguity(
         original: &Attempt<Ambiguous>,
         id: AttemptId,
@@ -186,6 +230,7 @@ impl DeliveryMachine {
         )
     }
 
+    #[must_use]
     pub fn deliberate_reprint(
         original: &Attempt<Delivered>,
         id: AttemptId,
@@ -251,51 +296,34 @@ mod tests {
 
     #[test]
     fn the_success_path_consumes_each_predecessor() {
-        let planned =
-            DeliveryMachine::plan(AttemptId(1), EditionId(9), 0, UnixMillis(10));
+        let planned = DeliveryMachine::plan(AttemptId(1), EditionId(9), 0, UnixMillis(10));
         let encoded = planned.encoded(UnixMillis(11), ONE);
         let transmitting = encoded.transmitting(UnixMillis(12));
         let delivered = transmitting.delivered(UnixMillis(13));
-        let effect = DeliveryMachine::release_effect(
-            &delivered,
-            ZERO,
-            EffectVerb::MarkRead,
-            target(),
-        );
+        let effect =
+            DeliveryMachine::release_effect(&delivered, ZERO, EffectVerb::MarkRead, target());
         assert_eq!(effect.delivered_by, AttemptId(1));
+        let applied = effect.applied(UnixMillis(14), ONE);
+        assert_eq!(applied.receipt, ONE);
     }
 
     #[test]
     fn a_post_transmission_disconnect_has_only_the_ambiguous_coordinate() {
-        let ambiguous = DeliveryMachine::plan(
-            AttemptId(1),
-            EditionId(9),
-            0,
-            UnixMillis(10),
-        )
-        .encoded(UnixMillis(11), ONE)
-        .transmitting(UnixMillis(12))
-        .ambiguous(UnixMillis(13), ZERO);
+        let ambiguous = DeliveryMachine::plan(AttemptId(1), EditionId(9), 0, UnixMillis(10))
+            .encoded(UnixMillis(11), ONE)
+            .transmitting(UnixMillis(12))
+            .ambiguous(UnixMillis(13), ZERO);
         assert_eq!(ambiguous.state.detail, ZERO);
     }
 
     #[test]
     fn an_ambiguous_delivery_can_only_be_reprinted_as_a_new_labeled_attempt() {
-        let original = DeliveryMachine::plan(
-            AttemptId(1),
-            EditionId(9),
-            0,
-            UnixMillis(10),
-        )
-        .encoded(UnixMillis(11), ONE)
-        .transmitting(UnixMillis(12))
-        .ambiguous(UnixMillis(13), ZERO);
-        let reprint = DeliveryMachine::reprint_after_ambiguity(
-            &original,
-            AttemptId(2),
-            1,
-            UnixMillis(14),
-        );
+        let original = DeliveryMachine::plan(AttemptId(1), EditionId(9), 0, UnixMillis(10))
+            .encoded(UnixMillis(11), ONE)
+            .transmitting(UnixMillis(12))
+            .ambiguous(UnixMillis(13), ZERO);
+        let reprint =
+            DeliveryMachine::reprint_after_ambiguity(&original, AttemptId(2), 1, UnixMillis(14));
         assert_eq!(reprint.original, AttemptId(1));
         assert_eq!(reprint.attempt.id, AttemptId(2));
         assert_eq!(reprint.reason, ReprintReason::AfterAmbiguity);
