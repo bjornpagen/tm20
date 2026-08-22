@@ -66,31 +66,31 @@ pub struct SlackMessageEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct SlackHistoryResponse {
-    ok: bool,
+pub struct SlackHistoryResponse {
+    pub ok: bool,
     #[serde(default)]
-    messages: Vec<SlackHistoryMessage>,
+    pub messages: Vec<SlackHistoryMessage>,
     #[serde(default)]
-    response_metadata: SlackResponseMetadata,
+    pub response_metadata: SlackResponseMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-struct SlackResponseMetadata {
+pub struct SlackResponseMetadata {
     #[serde(default)]
-    next_cursor: String,
+    pub next_cursor: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct SlackHistoryMessage {
+pub struct SlackHistoryMessage {
     #[serde(rename = "type")]
-    message_type: String,
-    user: String,
-    text: String,
-    ts: String,
+    pub message_type: String,
+    pub user: String,
+    pub text: String,
+    pub ts: String,
     #[serde(default)]
-    thread_ts: String,
+    pub thread_ts: String,
     #[serde(default)]
-    subtype: String,
+    pub subtype: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

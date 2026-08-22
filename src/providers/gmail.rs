@@ -68,46 +68,46 @@ impl CursorCodec for GmailCursor {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct GmailProfile {
-    email_address: String,
-    history_id: String,
+pub struct GmailProfile {
+    pub email_address: String,
+    pub history_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct GmailMessageList {
+pub struct GmailMessageList {
     #[serde(default)]
-    messages: Vec<GmailMessageRef>,
+    pub messages: Vec<GmailMessageRef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct GmailHistoryResponse {
+pub struct GmailHistoryResponse {
     #[serde(default)]
-    history: Vec<GmailHistory>,
-    history_id: String,
+    pub history: Vec<GmailHistory>,
+    pub history_id: String,
     #[serde(default)]
-    next_page_token: Option<String>,
+    pub next_page_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct GmailHistory {
-    id: String,
+pub struct GmailHistory {
+    pub id: String,
     #[serde(default)]
-    messages_added: Vec<GmailMessageAdded>,
+    pub messages_added: Vec<GmailMessageAdded>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct GmailMessageAdded {
-    message: GmailMessageRef,
+pub struct GmailMessageAdded {
+    pub message: GmailMessageRef,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct GmailMessageRef {
-    id: String,
-    thread_id: String,
+pub struct GmailMessageRef {
+    pub id: String,
+    pub thread_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -199,8 +199,8 @@ impl TryFrom<EffectRequest> for GmailEffect {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ModifyMessage {
-    remove_label_ids: [&'static str; 1],
+pub struct ModifyMessage {
+    pub remove_label_ids: [&'static str; 1],
 }
 
 pub struct GmailConnector<T> {
@@ -284,10 +284,9 @@ where
         cursor: &GmailCursor,
     ) -> Result<TypedPullBatch<GmailCursor, GmailEvent>, ProviderError> {
         let mut page_token = None;
-        let mut latest_history = cursor.history_id.clone();
         let mut message_ids = Vec::new();
         let mut seen = HashSet::new();
-        loop {
+        let latest_history = loop {
             let mut request = HttpRequest::get("/gmail/v1/users/me/history")
                 .query("startHistoryId", cursor.history_id.clone())
                 .query("historyTypes", "messageAdded")
@@ -301,7 +300,7 @@ where
                 .map_err(|error| provider_error("gmail", error))?
                 .json()
                 .map_err(|error| provider_error("gmail", error))?;
-            latest_history = page.history_id;
+            let page_history = page.history_id;
             for history in page.history {
                 for added in history.messages_added {
                     if seen.insert(added.message.id.clone()) {
@@ -311,9 +310,9 @@ where
             }
             match page.next_page_token {
                 Some(token) => page_token = Some(token),
-                None => break,
+                None => break page_history,
             }
-        }
+        };
         let mut observations = Vec::with_capacity(message_ids.len());
         for (history_id, message_id) in message_ids {
             let message = self.fetch_message(&message_id)?;

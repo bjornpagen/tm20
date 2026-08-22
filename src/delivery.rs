@@ -7,9 +7,7 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::connector::{
-    EffectRequest, EffectTarget, EffectVerb, ExternalKey, ProviderLocator,
-};
+use crate::connector::{EffectRequest, EffectTarget, EffectVerb, ExternalKey};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AttemptId(pub u64);
@@ -285,6 +283,7 @@ impl Error for DeliveryError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::connector::ProviderLocator;
 
     const ZERO: ExternalKey = ExternalKey([0; 32]);
     const ONE: ExternalKey = ExternalKey([1; 32]);

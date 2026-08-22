@@ -25,8 +25,8 @@ pub use connector::{
 };
 pub use delivery::{
     Ambiguous, AppliedEffect, Attempt, AttemptId, Delivered, DeliveryError, DeliveryMachine,
-    Encoded, Failed, FailedEffect, Planned, ReprintPlan, ReprintReason, Transmitting,
-    UpstreamEffect,
+    EditionId, Encoded, Failed, FailedEffect, Planned, ReprintPlan, ReprintReason, Transmitting,
+    UnixMillis, UpstreamEffect,
 };
 pub use paper::{
     CompiledEdition, Digest, DigestItem, Interrupt, MAX_DIGEST_ITEMS, MAX_TAPE_DOTS, PaperError,

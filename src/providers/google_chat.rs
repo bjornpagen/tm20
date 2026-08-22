@@ -11,7 +11,7 @@ use crate::connector::{
     EffectOutcome, EffectRequest, NormalizedObservation, ObservationKind, SourceClass,
     TypedConnector, TypedPullBatch,
 };
-use crate::providers::{ProviderError, digest, digest_parts, provider_error};
+use crate::providers::{ProviderError, digest, provider_error};
 use crate::transport::{HttpRequest, HttpTransport};
 
 const KEY: ConnectorKey = ConnectorKey::new("google-chat");
@@ -44,11 +44,11 @@ impl CursorCodec for GoogleChatCursor {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SpaceEventsResponse {
+pub struct SpaceEventsResponse {
     #[serde(default)]
-    space_events: Vec<ChatSpaceEvent>,
+    pub space_events: Vec<ChatSpaceEvent>,
     #[serde(default)]
-    next_page_token: String,
+    pub next_page_token: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -198,7 +198,8 @@ where
         for space in &self.spaces {
             let after = watermarks
                 .get(space.as_ref())
-                .map_or(EPOCH, String::as_str);
+                .cloned()
+                .unwrap_or_else(|| EPOCH.to_owned());
             let mut page = String::new();
             loop {
                 let mut request =

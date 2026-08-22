@@ -259,23 +259,23 @@ impl TryFrom<EffectRequest> for IMessageReadReceipt {
 }
 
 #[derive(Debug, Serialize)]
-struct ReadReceiptRequest<'a> {
-    through_message_id: &'a str,
-    idempotency_key: String,
+pub struct ReadReceiptRequest<'a> {
+    pub through_message_id: &'a str,
+    pub idempotency_key: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum ReceiptStatus {
+pub enum ReceiptStatus {
     Applied,
     AlreadyApplied,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct ReadReceiptResponse {
-    receipt_id: String,
-    status: ReceiptStatus,
-    applied_at: String,
+pub struct ReadReceiptResponse {
+    pub receipt_id: String,
+    pub status: ReceiptStatus,
+    pub applied_at: String,
 }
 
 pub struct IMessageConnector<T> {

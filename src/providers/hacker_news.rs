@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::connector::{
     Capability, ConnectorDescriptor, ConnectorError, ConnectorKey, CursorCodec, CursorToken,
-    EffectOutcome, EffectRequest, ExternalKey, NormalizedObservation, ObservationKind, SourceClass,
+    EffectOutcome, EffectRequest, NormalizedObservation, ObservationKind, SourceClass,
     TypedConnector, TypedPullBatch,
 };
 use crate::providers::{ProviderError, digest, digest_parts, provider_error};
