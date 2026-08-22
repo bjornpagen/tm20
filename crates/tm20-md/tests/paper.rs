@@ -8,7 +8,7 @@ use tm20::command::Command;
 use tm20::encode::encode;
 use tm20::graphics::max_height;
 use tm20_md::{image_bytes, sheet};
-use tm20_set::{Measure, compose, lower, preview_png};
+use tm20_set::{Measure, compose, lower};
 
 use common::table;
 
@@ -49,19 +49,6 @@ fn fixtures_encode() {
             tm20_set::lower(&sheet, &faces).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         let bytes = encode(&doc).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         assert!(!bytes.is_empty(), "{}", path.display());
-    }
-}
-
-#[test]
-fn fixtures_preview_png() {
-    let faces = table();
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/tm20-preview");
-    std::fs::create_dir_all(&dir).unwrap();
-    for path in markdown_files() {
-        let sheet = load_sheet(&path);
-        let g = compose(&sheet, &faces).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        let name = path.file_stem().unwrap().to_string_lossy();
-        std::fs::write(dir.join(format!("{name}.png")), preview_png(&g).unwrap()).unwrap();
     }
 }
 
