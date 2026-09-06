@@ -922,26 +922,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
-name = "libudev"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78b324152da65df7bb95acfcaab55e3097ceaab02fb19b228a9eb74d55f135e0"
-dependencies = [
- "libc",
- "libudev-sys",
-]
-
-[[package]]
-name = "libudev-sys"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c8469b4a23b962c1396b9b451dda50ef5b283e8dd309d69033475fa9b334324"
-dependencies = [
- "libc",
- "pkg-config",
-]
-
-[[package]]
 name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1837,7 +1817,6 @@ dependencies = [
  "core-foundation 0.10.1",
  "core-foundation-sys",
  "io-kit-sys 0.4.1",
- "libudev",
  "mach2 0.4.3",
  "nix",
  "scopeguard",
@@ -2130,14 +2109,18 @@ dependencies = [
  "tm20",
  "tm20-md",
  "tm20-set",
+ "usage-rs",
 ]
 
 [[package]]
 name = "tm20-md"
 version = "0.1.0"
 dependencies = [
+ "ab_glyph",
  "comrak",
  "image",
+ "ratex-font",
+ "ratex-font-loader",
  "ratex-layout",
  "ratex-parser",
  "ratex-render",
@@ -2317,6 +2300,33 @@ dependencies = [
  "idna",
  "percent-encoding",
  "serde",
+]
+
+[[package]]
+name = "usage-argv"
+version = "6.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64ab89a0a6974bb82b87d9b3dbdced288b934ac9a91ebe01f66304efd9214dbe"
+
+[[package]]
+name = "usage-derive"
+version = "6.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4b06744009f786ea4d38a8136e38af3da3ea86b0515ddb24ca8bd176c3d2324"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
+]
+
+[[package]]
+name = "usage-rs"
+version = "6.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "794778bdd02b146ab233017d8ae8ad0093e599706d1611c44674bad63faf3357"
+dependencies = [
+ "usage-argv",
+ "usage-derive",
 ]
 
 [[package]]

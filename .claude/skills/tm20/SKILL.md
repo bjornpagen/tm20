@@ -23,10 +23,10 @@ Author new tapes and figures in a unique temporary directory under `/tmp`,
 not in the repo. Keep supplied files and existing fixtures in place.
 
 ```sh
-# Print one file; --serial S may precede print to select a device.
+# Print one file; --usb-serial S may precede print to select a USB device.
 cargo run --locked --bin tm20-set -- print md /tmp/TAPE_DIR/tape.md
 
-# No USB; writes PREVIEW_DIR/tape.png at 2×.
+# No printer; writes PREVIEW_DIR/tape.png at 2×.
 cargo run --locked --bin tm20-set -- --dry --png /tmp/PREVIEW_DIR print md /tmp/TAPE_DIR/tape.md
 ```
 
@@ -35,6 +35,14 @@ prints immediate lowercase `*.md` entries sorted by path, one cut each;
 select a directory only when the user wants the batch. Preview also works
 for directories. Same-named PNGs are overwritten. Built-ins: `ticket`,
 `prose`, `helvetica`, `suite`; bare `print` lists them.
+
+Use `--help` for the generated CLI reference. USB is default;
+`--tcp HOST:PORT` selects raw TCP; `--serial-port PATH --baud RATE` selects
+a serial port. `--serial` remains a USB serial-number alias.
+Destinations conflict with `--dry`, `--output`, and `--fake-delivery`.
+`--output FILE` writes ESC/POS instead of printing; `--output -` emits only
+bytes on stdout. `print md -` reads stdin; relative images use `--base-dir DIR`
+or the working directory. All inputs prepare before any output or connection.
 
 ## Write for 576 dots
 
@@ -68,7 +76,7 @@ for directories. Same-named PNGs are overwritten. Built-ins: `ticket`,
 
 ## Failure boundaries
 
-The complete batch encodes before USB opens: parsing/rendering errors send
+The complete batch encodes before any printer opens: parsing/rendering errors send
 nothing. Read the error code, filename, source line/character column, excerpt,
 and reason. Correct that source construct; `--dry` checks a repair without
 printing. Preserve the intended content; do not weaken validation,
@@ -84,6 +92,14 @@ After a write/completion failure, delivery may be partial: never resend
 automatically; establish what printed or ask before another copy. `hello`,
 `test all`, status, and debug are device operations, not harmless validation.
 
-The CLI needs Helvetica.ttc and Menlo.ttc in macOS `/System/Library/Fonts`;
-real printing needs the TM-T20III (`04b8:0e28`). Missing fonts are a prerequisite
-failure. Keep disposable tapes and generated output out of commits.
+Portable embedded fonts are the default on macOS, Fedora, and gokrazy.
+Use `--fonts macos` only when Helvetica/Menlo typography is requested and
+those system fonts exist. Math uses embedded KaTeX glyphs, not host fallback.
+USB targets the TM-T20III (`04b8:0e28`). Keep disposable tapes and generated
+output out of commits.
+
+Both executables run once in the foreground. The OS owns supervision;
+do not add daemon code or service artifacts to an ordinary print task.
+`--failure-exit-code 125` makes a valid job's failure stop gokrazy supervision;
+syntax errors still return 1, signals remain signals. Restarting after partial
+delivery can duplicate paper, regardless of exit policy.

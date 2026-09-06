@@ -37,188 +37,33 @@ const INFO_REQUESTS: [InfoRequest; 8] = [
     InfoRequest::Fonts,
 ];
 
-fn usage() {
-    eprintln!(
-        "tm20 [--serial S] [--dry] [--wait] list | debug | hello | text <str> | ruler | status | recover | id | qr <data> | ean13 <digits> | test [id|all]\n  --wait sends GS ( H after the job and blocks until the printer replies\n  --dry prints planned bytes and never opens USB; debug and list cannot dry-run\n  TM20_TRACE=1 logs USB timings"
-    );
-}
+mod connection;
+mod protocol_args;
+#[cfg(test)]
+use protocol_args::parse;
+use protocol_args::{Cli, Command, Mode, Parsed};
 
 fn main() -> ExitCode {
-    match run(env::args().skip(1)) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            eprintln!("{e}");
-            ExitCode::FAILURE
+    let argv: Vec<_> = env::args_os().skip(1).collect();
+    match Cli::embedded_outcome(&argv) {
+        usage::embedded::Outcome::Exit(exit) => {
+            if exit.stderr {
+                eprint!("{}", exit.text);
+            } else {
+                print!("{}", exit.text);
+            }
+            ExitCode::from(u8::from(exit.code != 0))
         }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Mode {
-    Dry {
-        wait: bool,
-    },
-    Deliver {
-        selector: Option<String>,
-        wait: bool,
-    },
-}
-
-impl Mode {
-    fn is_dry(&self) -> bool {
-        matches!(self, Self::Dry { .. })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Command {
-    List,
-    Debug,
-    Hello,
-    Text(String),
-    Ruler,
-    Status,
-    Recover,
-    Id,
-    Qr(String),
-    Ean13(String),
-    TestList,
-    TestAll,
-    TestOne(String),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Parsed {
-    mode: Mode,
-    command: Command,
-}
-
-fn parse<I, S>(args: I) -> io::Result<Parsed>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<str>,
-{
-    let mut serial = None;
-    let mut dry = false;
-    let mut wait = false;
-    let mut rest = Vec::new();
-    let mut raw = args.into_iter().map(|s| s.as_ref().to_owned());
-    while let Some(a) = raw.next() {
-        match a.as_str() {
-            "--serial" => {
-                serial = Some(raw.next().ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::InvalidInput, "--serial needs a value")
-                })?);
-            }
-            "--dry" => dry = true,
-            "--wait" => wait = true,
-            other if other.starts_with('-') => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("unknown option {other}"),
-                ));
-            }
-            other => {
-                rest.push(other.to_owned());
-                rest.extend(raw);
-                break;
+        usage::embedded::Outcome::Parsed(cli) => {
+            let failure = cli.failure_exit_code.get();
+            match cli.into_command().and_then(run_parsed) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("{e}");
+                    ExitCode::from(failure)
+                }
             }
         }
-    }
-
-    let mode = if dry {
-        Mode::Dry { wait }
-    } else {
-        Mode::Deliver {
-            selector: serial,
-            wait,
-        }
-    };
-
-    let mut cmd = rest.into_iter();
-    let command = match cmd.next().as_deref() {
-        Some("list") => {
-            reject_extra(cmd.next())?;
-            Command::List
-        }
-        Some("debug") => {
-            reject_extra(cmd.next())?;
-            Command::Debug
-        }
-        Some("hello") => {
-            reject_extra(cmd.next())?;
-            Command::Hello
-        }
-        Some("text") => {
-            let text = cmd.next().unwrap_or_default();
-            reject_extra(cmd.next())?;
-            Command::Text(text)
-        }
-        Some("ruler") => {
-            reject_extra(cmd.next())?;
-            Command::Ruler
-        }
-        Some("status") => {
-            reject_extra(cmd.next())?;
-            Command::Status
-        }
-        Some("recover") => {
-            reject_extra(cmd.next())?;
-            Command::Recover
-        }
-        Some("id") => {
-            reject_extra(cmd.next())?;
-            Command::Id
-        }
-        Some("qr") => {
-            let data = cmd
-                .next()
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "qr needs data"))?;
-            reject_extra(cmd.next())?;
-            Command::Qr(data)
-        }
-        Some("ean13") => {
-            let digits = cmd
-                .next()
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "ean13 needs digits"))?;
-            reject_extra(cmd.next())?;
-            Command::Ean13(digits)
-        }
-        Some("test") => match cmd.next() {
-            None => Command::TestList,
-            Some(id) if id == "all" => {
-                reject_extra(cmd.next())?;
-                Command::TestAll
-            }
-            Some(id) => {
-                reject_extra(cmd.next())?;
-                Command::TestOne(id)
-            }
-        },
-        Some(other) => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("unknown command {other}"),
-            ));
-        }
-        None => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "unknown command",
-            ));
-        }
-    };
-
-    Ok(Parsed { mode, command })
-}
-
-fn reject_extra(extra: Option<String>) -> io::Result<()> {
-    match extra {
-        Some(a) => Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("unexpected argument {a}"),
-        )),
-        None => Ok(()),
     }
 }
 
@@ -230,16 +75,12 @@ fn dry_not_applicable(cmd: &str) -> tm20::Error {
     .into()
 }
 
+#[cfg(test)]
 fn run(args: impl IntoIterator<Item = impl AsRef<str>>) -> tm20::Result<()> {
-    let parsed = match parse(args) {
-        Ok(p) => p,
-        Err(e) => {
-            if e.to_string().contains("unknown command") {
-                usage();
-            }
-            return Err(e.into());
-        }
-    };
+    run_parsed(parse(args)?)
+}
+
+fn run_parsed(parsed: Parsed) -> tm20::Result<()> {
     match parsed.command {
         Command::List => {
             if parsed.mode.is_dry() {
@@ -251,24 +92,27 @@ fn run(args: impl IntoIterator<Item = impl AsRef<str>>) -> tm20::Result<()> {
             if parsed.mode.is_dry() {
                 return Err(dry_not_applicable("debug"));
             }
-            let Mode::Deliver { selector, .. } = &parsed.mode else {
+            let Mode::Deliver { destination, .. } = &parsed.mode else {
                 unreachable!("debug is device-only");
             };
-            debug(selector.as_deref())
+            debug(match destination {
+                connection::Destination::Usb { serial } => serial.as_deref(),
+                _ => return Err(dry_not_applicable("non-USB debug")),
+            })
         }
         Command::Status => {
             if parsed.mode.is_dry() {
                 dry_status();
                 return Ok(());
             }
-            with_usb(&parsed.mode, status_on)
+            with_transport(&parsed.mode, status_on)
         }
         Command::Id => {
             if parsed.mode.is_dry() {
                 dry_id();
                 return Ok(());
             }
-            with_usb(&parsed.mode, identify_on)
+            with_transport(&parsed.mode, identify_on)
         }
         Command::Hello => emit_doc(&parsed.mode, &encode(&hello())?),
         Command::Text(text) => emit_doc(&parsed.mode, &encode(&text_page(&text))?),
@@ -282,14 +126,14 @@ fn run(args: impl IntoIterator<Item = impl AsRef<str>>) -> tm20::Result<()> {
     }
 }
 
-fn with_usb<F>(mode: &Mode, f: F) -> tm20::Result<()>
+fn with_transport<F>(mode: &Mode, f: F) -> tm20::Result<()>
 where
-    F: FnOnce(&mut ReplyReader<Usb>) -> tm20::Result<()>,
+    F: FnOnce(&mut ReplyReader<Box<dyn Transport>>) -> tm20::Result<()>,
 {
-    let Mode::Deliver { selector, .. } = mode else {
+    let Mode::Deliver { destination, .. } = mode else {
         return Err(dry_not_applicable("device"));
     };
-    let mut reader = ReplyReader::new(Usb::open(selector.as_deref())?);
+    let mut reader = ReplyReader::new(destination.open()?);
     f(&mut reader)
 }
 
@@ -302,8 +146,8 @@ fn emit_doc(mode: &Mode, bytes: &[u8]) -> tm20::Result<()> {
             }
             Ok(())
         }
-        Mode::Deliver { selector, wait } => {
-            let mut reader = ReplyReader::new(Usb::open(selector.as_deref())?);
+        Mode::Deliver { destination, wait } => {
+            let mut reader = ReplyReader::new(destination.open()?);
             deliver(&mut reader, bytes, *wait)
         }
     }
@@ -453,8 +297,8 @@ fn test_all(mode: &Mode) -> tm20::Result<()> {
             }
             Ok(())
         }
-        Mode::Deliver { selector, wait } => {
-            let mut reader = ReplyReader::new(Usb::open(selector.as_deref())?);
+        Mode::Deliver { destination, wait } => {
+            let mut reader = ReplyReader::new(destination.open()?);
             for (id, expect, bytes) in &jobs {
                 eprintln!("printing {id} ({expect})");
                 deliver(&mut reader, bytes, *wait)?;
@@ -496,7 +340,7 @@ mod tests {
 
     #[test]
     fn leading_options_and_known_spellings() {
-        let p = parse_ok(&["--serial", "S", "--dry", "--wait", "hello"]);
+        let p = parse_ok(&["--dry", "--wait", "hello"]);
         assert_eq!(p.mode, Mode::Dry { wait: true });
         assert_eq!(p.command, Command::Hello);
         assert_eq!(parse_ok(&["text"]).command, Command::Text(String::new()));
@@ -511,15 +355,21 @@ mod tests {
 
     #[test]
     fn unknown_options_and_extra_positionals_are_rejected() {
-        assert!(parse_err(&["--foo", "hello"]).contains("unknown option --foo"));
-        assert!(parse_err(&["hello", "x"]).contains("unexpected argument x"));
-        assert!(parse_err(&["status", "x"]).contains("unexpected argument x"));
-        assert!(parse_err(&["test", "all", "x"]).contains("unexpected argument x"));
-        assert!(parse_err(&["text", "a", "b"]).contains("unexpected argument b"));
-        assert!(parse_err(&["qr"]).contains("qr needs data"));
-        assert!(parse_err(&[]).contains("unknown command"));
-        assert!(parse_err(&["nope"]).contains("unknown command nope"));
-        assert!(parse_err(&["--serial"]).contains("--serial needs a value"));
+        for args in [
+            vec!["--foo", "hello"],
+            vec!["hello", "x"],
+            vec!["status", "x"],
+            vec!["test", "all", "x"],
+            vec!["text", "a", "b"],
+            vec!["qr"],
+            vec![],
+            vec!["nope"],
+            vec!["--serial"],
+            vec!["--dry", "--tcp", "localhost:9100", "hello"],
+            vec!["--wait", "status"],
+        ] {
+            assert!(!parse_err(&args).is_empty());
+        }
     }
 
     #[test]

@@ -1,15 +1,8 @@
-//! One interpreter for preview and optional delivery.
-//!
-//! Order is prepare (caller) → preview → deliver. `open` runs only in
-//! [`OutputMode::Deliver`]. Dry and Fake never open a transport.
-//!
-//! `--fake-delivery DIR` writes `DIR/{name}.bin` (encoded job bytes) and
-//! never calls USB. `--dry` and default Deliver USB are unchanged.
-//!
-//! [`run`] / [`execute`] take `FnOnce() -> Result<T: Transport>`.
-//! Tests inject [`tm20::Memory`] or any other `Transport`. There is no USB
-//! factory and no general DI. PNG `DIR/{name}.png` overwrites if present.
+//! Prepare the complete batch → previews → one output effect.
+//! Only Deliver opens a transport; no automatic resend after a write error.
+//! Raw output contains only ESC/POS bytes. Diagnostics always use stderr.
 
+use std::io::Write;
 use std::path::Path;
 
 use tm20::Transport;
@@ -17,19 +10,22 @@ use tm20::command::Command;
 use tm20_set::preview_pngs;
 
 use crate::Result;
-use crate::args::{OutputMode, Selection};
+use crate::args::{OutputMode, RawTarget, Selection};
 use crate::images::ImagePolicy;
 use crate::jobs::{PreparedJob, enumerate, prepare_all};
+use crate::kit::FontProfile;
 
 /// Enumerate, prepare the whole batch, then interpret. Device open is last.
 pub fn run<T: Transport>(
     selection: &Selection,
     mode: &OutputMode,
     images: ImagePolicy,
+    fonts: FontProfile,
     open: impl FnOnce() -> Result<T>,
 ) -> Result<()> {
     let specs = enumerate(selection)?;
-    let jobs = prepare_all(&specs, images)?;
+    let faces = fonts.load()?;
+    let jobs = prepare_all(&specs, images, &faces)?;
     execute(&jobs, mode, open)
 }
 
@@ -45,6 +41,10 @@ pub fn execute<T: Transport>(
     }
     match mode {
         OutputMode::Dry { .. } => Ok(()),
+        OutputMode::Raw { target, .. } => match target {
+            RawTarget::Stdout => write_raw(jobs, &mut std::io::stdout().lock()),
+            RawTarget::File(path) => write_raw(jobs, &mut std::fs::File::create(path)?),
+        },
         OutputMode::Fake { sink_dir, .. } => write_fake_delivery(jobs, sink_dir),
         OutputMode::Deliver { .. } => {
             let mut transport = open()?;
@@ -54,6 +54,14 @@ pub fn execute<T: Transport>(
             Ok(())
         }
     }
+}
+
+fn write_raw(jobs: &[PreparedJob], writer: &mut impl Write) -> Result<()> {
+    for job in jobs {
+        writer.write_all(&job.bytes)?;
+    }
+    writer.flush()?;
+    Ok(())
 }
 
 /// Writes each job's encoded bytes to `{dir}/{name}.bin`. Never USB.
@@ -110,7 +118,7 @@ fn report(job: &PreparedJob, dry: bool) {
             heights.len()
         );
     }
-    println!("{}", job.bytes.len());
+    eprintln!("bytes: {}", job.bytes.len());
 }
 
 fn graphics_heights(doc: &tm20::Document) -> Vec<u32> {
@@ -212,7 +220,9 @@ mod tests {
     fn deliver(preview: Option<PathBuf>) -> OutputMode {
         OutputMode::Deliver {
             preview_dir: preview,
-            selector: Some("fake".into()),
+            destination: crate::connection::Destination::Usb {
+                serial: Some("fake".into()),
+            },
         }
     }
 
@@ -386,6 +396,7 @@ mod tests {
             &Selection::Markdown(tmp.0.clone()),
             &deliver(None),
             ImagePolicy::default(),
+            FontProfile::Portable,
             move || {
                 opens_c.set(opens_c.get() + 1);
                 Ok(Memory::new())

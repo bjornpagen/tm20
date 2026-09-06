@@ -2,17 +2,22 @@
 name = "tm20-cli"
 version = "0.1.0"
 edition.workspace = true
-license.workspace = true
+license = "0BSD AND OFL-1.1"
 publish.workspace = true
 
 [[bin]]
 name = "tm20-set"
 path = "src/main.rs"
 
+[[bin]]
+name = "tm20"
+path = "src/protocol.rs"
+
 [dependencies]
 tm20 = { workspace = true }
 tm20-set = { workspace = true }
 tm20-md = { workspace = true }
+usage = { workspace = true }
 reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "rustls", "socks", "system-proxy"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

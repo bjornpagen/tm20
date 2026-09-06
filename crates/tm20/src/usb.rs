@@ -138,7 +138,7 @@ impl Usb {
         }
         let (iface_num, out, inp, _) = best.ok_or(UsbError::NoBulkOut)?;
         let interface = device
-            .claim_interface(iface_num)
+            .detach_and_claim_interface(iface_num)
             .wait()
             .map_err(UsbError::from)?;
 

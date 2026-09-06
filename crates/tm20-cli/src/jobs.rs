@@ -2,17 +2,17 @@
 
 use std::fs;
 use std::io;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use tm20::document::Document;
 use tm20::encode::encode;
-use tm20_set::Measure;
+use tm20_set::{FaceTable, Measure};
 
 use crate::Result;
 use crate::args::Selection;
 use crate::images::ImagePolicy;
-use crate::kit::system_table;
-use crate::sheets::{Case, catalog, find};
+use crate::sheets::{Case, catalog};
 
 /// One encoded job. `name` is the PNG stem and catalog id / markdown stem.
 #[derive(Debug, Clone)]
@@ -56,17 +56,17 @@ impl PreparedJob {
 pub enum JobSpec {
     Catalog(Case),
     Markdown(PathBuf),
+    Stdin { base_dir: PathBuf },
 }
 
 /// Build the selected specs. Read-directory errors are returned, never dropped.
 pub fn enumerate(selection: &Selection) -> Result<Vec<JobSpec>> {
     match selection {
-        Selection::ListCatalog => Ok(Vec::new()),
         Selection::All => Ok(catalog().iter().copied().map(JobSpec::Catalog).collect()),
-        Selection::Builtin(id) => {
-            let case = find(id).ok_or_else(|| format!("unknown sheet {id}"))?;
-            Ok(vec![JobSpec::Catalog(case)])
-        }
+        Selection::Builtin(case) => Ok(vec![JobSpec::Catalog(*case)]),
+        Selection::Stdin { base_dir } => Ok(vec![JobSpec::Stdin {
+            base_dir: base_dir.clone(),
+        }]),
         Selection::Markdown(path) => {
             if path.is_dir() {
                 let files = markdown_in_dir(path)?;
@@ -82,27 +82,42 @@ pub fn enumerate(selection: &Selection) -> Result<Vec<JobSpec>> {
 }
 
 /// Prepare every spec. The first failure stops the batch; nothing is delivered.
-pub fn prepare_all(specs: &[JobSpec], images: ImagePolicy) -> Result<Vec<PreparedJob>> {
-    specs.iter().map(|spec| prepare(spec, images)).collect()
+pub fn prepare_all(
+    specs: &[JobSpec],
+    images: ImagePolicy,
+    faces: &FaceTable,
+) -> Result<Vec<PreparedJob>> {
+    specs
+        .iter()
+        .map(|spec| prepare(spec, images, faces))
+        .collect()
 }
 
-fn prepare(spec: &JobSpec, images: ImagePolicy) -> Result<PreparedJob> {
+fn prepare(spec: &JobSpec, images: ImagePolicy, faces: &FaceTable) -> Result<PreparedJob> {
     match spec {
         JobSpec::Catalog(case) => {
-            let document = case.doc()?;
+            let document = case.doc(faces)?;
             let bytes = encode(&document)?;
             Ok(PreparedJob {
-                name: case.id.to_owned(),
+                name: case.id().to_owned(),
                 document,
                 bytes,
                 origin: JobOrigin::Catalog {
-                    id: case.id.to_owned(),
-                    title: case.title.to_owned(),
+                    id: case.id().to_owned(),
+                    title: case.title().to_owned(),
                 },
             })
         }
         JobSpec::Markdown(path) => {
-            let document = md_document(path, images)?;
+            let src = fs::read_to_string(path)
+                .map_err(|e| format!("{}: cannot read UTF-8 Markdown: {e}", path.display()))?;
+            let document = md_document(
+                &path.display().to_string(),
+                &src,
+                path.parent().unwrap_or_else(|| Path::new(".")),
+                images,
+                faces,
+            )?;
             let bytes = encode(&document)?;
             let name = path
                 .file_stem()
@@ -116,19 +131,38 @@ fn prepare(spec: &JobSpec, images: ImagePolicy) -> Result<PreparedJob> {
                 },
             })
         }
+        JobSpec::Stdin { base_dir } => {
+            let mut src = String::new();
+            std::io::stdin()
+                .lock()
+                .read_to_string(&mut src)
+                .map_err(|e| format!("<stdin>: cannot read UTF-8 Markdown: {e}"))?;
+            let document = md_document("<stdin>", &src, base_dir, images, faces)?;
+            let bytes = encode(&document)?;
+            Ok(PreparedJob {
+                name: "stdin".into(),
+                document,
+                bytes,
+                origin: JobOrigin::Markdown {
+                    path_display: "<stdin>".into(),
+                },
+            })
+        }
     }
 }
 
-fn md_document(path: &Path, images: ImagePolicy) -> Result<Document> {
-    let src = fs::read_to_string(path)?;
-    let base = path.parent().unwrap_or_else(|| Path::new("."));
-    let sheet = tm20_md::sheet(&src, Measure::TAPE, |dest| {
+fn md_document(
+    label: &str,
+    src: &str,
+    base: &Path,
+    images: ImagePolicy,
+    faces: &FaceTable,
+) -> Result<Document> {
+    let sheet = tm20_md::sheet(src, Measure::TAPE, |dest| {
         crate::images::load(images, base, dest)
     })
-    .map_err(|e| format!("{}: [{}] {e}", path.display(), e.code()))?;
-    let faces = system_table()?;
-    Ok(tm20_set::lower(&sheet, &faces)
-        .map_err(|e| format!("{}: [{}] {e}", path.display(), e.code()))?)
+    .map_err(|e| format!("{label}: [{}] {e}", e.code()))?;
+    Ok(tm20_set::lower(&sheet, faces).map_err(|e| format!("{label}: [{}] {e}", e.code()))?)
 }
 
 fn markdown_in_dir(dir: &Path) -> Result<Vec<PathBuf>> {
@@ -182,15 +216,14 @@ mod tests {
         let ids: Vec<_> = all
             .iter()
             .map(|s| match s {
-                JobSpec::Catalog(c) => c.id,
-                JobSpec::Markdown(_) => panic!("catalog"),
+                JobSpec::Catalog(c) => c.id(),
+                JobSpec::Markdown(_) | JobSpec::Stdin { .. } => panic!("catalog"),
             })
             .collect();
         assert_eq!(ids, ["ticket", "prose", "helvetica", "suite"]);
 
-        let one = enumerate(&Selection::Builtin("ticket".into())).unwrap();
+        let one = enumerate(&Selection::Builtin(crate::sheets::Case::Ticket)).unwrap();
         assert_eq!(one.len(), 1);
-        assert!(enumerate(&Selection::Builtin("nope".into())).is_err());
     }
 
     #[test]
@@ -223,7 +256,7 @@ mod tests {
             .iter()
             .map(|s| match s {
                 JobSpec::Markdown(p) => p.file_name().unwrap().to_string_lossy().into_owned(),
-                JobSpec::Catalog(_) => panic!("md"),
+                JobSpec::Catalog(_) | JobSpec::Stdin { .. } => panic!("md"),
             })
             .collect();
         assert_eq!(names, ["a.md", "b.md"]);
@@ -239,6 +272,7 @@ mod tests {
         fs::create_dir(tmp.0.join("a.md")).unwrap();
         fs::write(tmp.0.join("b.md"), "# ok\n").unwrap();
         let specs = enumerate(&Selection::Markdown(tmp.0.clone())).unwrap();
-        assert!(prepare_all(&specs, ImagePolicy::default()).is_err());
+        let faces = crate::kit::FontProfile::Portable.load().unwrap();
+        assert!(prepare_all(&specs, ImagePolicy::default(), &faces).is_err());
     }
 }

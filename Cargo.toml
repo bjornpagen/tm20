@@ -11,6 +11,7 @@ publish = false
 tm20 = { path = "crates/tm20" }
 tm20-set = { path = "crates/tm20-set" }
 tm20-md = { path = "crates/tm20-md" }
+usage = { package = "usage-rs", version = "6.7.1" }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

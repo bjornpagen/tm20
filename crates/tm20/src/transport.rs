@@ -12,3 +12,12 @@ pub trait Transport {
     fn write(&mut self, data: &[u8]) -> Result<()>;
     fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
 }
+
+impl<T: Transport + ?Sized> Transport for Box<T> {
+    fn write(&mut self, data: &[u8]) -> Result<()> {
+        (**self).write(data)
+    }
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        (**self).read(buf)
+    }
+}

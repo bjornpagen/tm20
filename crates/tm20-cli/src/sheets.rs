@@ -8,47 +8,45 @@ use tm20_set::{
 };
 
 use crate::Result;
-use crate::kit::system_table;
+use tm20_set::FaceTable;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Case {
-    pub id: &'static str,
-    pub title: &'static str,
+pub enum Case {
+    Ticket,
+    Prose,
+    Helvetica,
+    Suite,
 }
 
 pub fn catalog() -> &'static [Case] {
-    &[
-        Case {
-            id: "ticket",
-            title: "mark, columns, section rules",
-        },
-        Case {
-            id: "prose",
-            title: "markdown-shaped: heads, emphasis, quote, list, columns",
-        },
-        Case {
-            id: "helvetica",
-            title: "Helvetica voices, not a weight ladder",
-        },
-        Case {
-            id: "suite",
-            title: "quote, hung code, nested blocks, notes, figure",
-        },
-    ]
-}
-
-pub fn find(id: &str) -> Option<Case> {
-    catalog().iter().copied().find(|c| c.id == id)
+    &[Case::Ticket, Case::Prose, Case::Helvetica, Case::Suite]
 }
 
 impl Case {
-    pub fn doc(self) -> Result<Document> {
-        match self.id {
-            "ticket" => ticket(),
-            "prose" => prose(),
-            "helvetica" => helvetica(),
-            "suite" => suite(),
-            _ => unreachable!("catalog ids are closed"),
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Ticket => "ticket",
+            Self::Prose => "prose",
+            Self::Helvetica => "helvetica",
+            Self::Suite => "suite",
+        }
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Ticket => "mark, columns, section rules",
+            Self::Prose => "heads, emphasis, quote, list, columns",
+            Self::Helvetica => "selected font voices, not a weight ladder",
+            Self::Suite => "quote, code, nested blocks, notes, figure",
+        }
+    }
+
+    pub fn doc(self, faces: &FaceTable) -> Result<Document> {
+        match self {
+            Self::Ticket => ticket(faces),
+            Self::Prose => prose(faces),
+            Self::Helvetica => helvetica(faces),
+            Self::Suite => suite(faces),
         }
     }
 }
@@ -70,8 +68,7 @@ fn li(cut: Cut, size: TextSize, text: &str) -> ListItem<'_> {
     ListItem::new(item(cut, size, text))
 }
 
-fn ticket() -> Result<Document> {
-    let faces = system_table()?;
+fn ticket(faces: &FaceTable) -> Result<Document> {
     let body = TextSize::Pt11;
     let frames = vec![
         Frame::Mark(Mark {
@@ -98,11 +95,10 @@ fn ticket() -> Result<Document> {
         Frame::Rule(Rule::tape(Thickness::One)),
         Frame::Cols(cols(Cut::Bold, "Total", "$7.50")),
     ];
-    Ok(tm20_set::lower(&Sheet::tape(frames), &faces)?)
+    Ok(tm20_set::lower(&Sheet::tape(frames), faces)?)
 }
 
-fn prose() -> Result<Document> {
-    let faces = system_table()?;
+fn prose(faces: &FaceTable) -> Result<Document> {
     let body = TextSize::Pt11;
     let frames = vec![
         Frame::Mark(Mark {
@@ -165,16 +161,15 @@ fn prose() -> Result<Document> {
         Frame::Rule(Rule::tape(Thickness::One)),
         Frame::Cols(cols(Cut::Bold, "Total", "$7.50")),
     ];
-    Ok(tm20_set::lower(&Sheet::tape(frames), &faces)?)
+    Ok(tm20_set::lower(&Sheet::tape(frames), faces)?)
 }
 
-fn helvetica() -> Result<Document> {
-    let faces = system_table()?;
+fn helvetica(faces: &FaceTable) -> Result<Document> {
     let body = TextSize::Pt11;
     let mut frames = vec![Frame::Mark(Mark {
         cut: DisplayCut::Roman,
         size: DisplaySize::Pt18,
-        text: "Helvetica".into(),
+        text: "Type specimen".into(),
         align: MarkAlign::Start,
         tracking: Tracking(0),
     })];
@@ -191,7 +186,7 @@ fn helvetica() -> Result<Document> {
             size: body,
             spans: vec![
                 Span::new(Cut::Roman, "Roman body. "),
-                Span::new(Cut::Italic, "Oblique fills Italic. "),
+                Span::new(Cut::Italic, "Italic voice. "),
                 Span::new(Cut::Bold, "Bold is a voice, not a size."),
             ],
         }),
@@ -201,11 +196,10 @@ fn helvetica() -> Result<Document> {
         }),
         Frame::Cols(cols(Cut::Roman, "Espresso", "$4.50")),
     ]);
-    Ok(tm20_set::lower(&Sheet::tape(frames), &faces)?)
+    Ok(tm20_set::lower(&Sheet::tape(frames), faces)?)
 }
 
-fn suite() -> Result<Document> {
-    let faces = system_table()?;
+fn suite(faces: &FaceTable) -> Result<Document> {
     let body = TextSize::Pt11;
     let pig = Figure::from_image(include_bytes!("pig.png"))?;
     let mut sheet = Sheet::tape(Vec::new());
@@ -267,7 +261,7 @@ fn suite() -> Result<Document> {
         }),
         Frame::Figure(pig),
     ];
-    Ok(tm20_set::lower(&sheet, &faces)?)
+    Ok(tm20_set::lower(&sheet, faces)?)
 }
 
 #[cfg(test)]
