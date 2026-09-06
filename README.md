@@ -6,25 +6,62 @@ missing glyphs, and clipped content are errors with source context—not fallbac
 Diagnostics include error codes, source lines/character columns, excerpts, and
 repair guidance. Code and tests define behavior.
 
-Rust 1.91+; stable toolchain. Install both commands with
-`cargo install tm20-cli --locked`.
+## Command line
 
-| Cargo dependency | Use |
-| --- | --- |
-| `cargo add tm20` | Typed ESC/POS and USB/serial/TCP transport |
-| `cargo add tm20-md tm20-set tm20` | Markdown → portable fonts → ESC/POS; [complete example](https://github.com/bjornpagen/tm20/blob/main/crates/tm20-md/examples/markdown.rs) |
+Published on [crates.io](https://crates.io/crates/tm20-cli). Rust 1.91+;
+no nightly, font installation, or external Usage executable required.
 
 ```sh
-tm20-set --dry print md receipt.md   # Validate without a printer
-tm20-set print md receipt.md         # Print over USB
-tm20-set --output receipt.bin print md receipt.md  # Encode without delivery
+cargo install tm20-cli --locked
+
+printf '# Hello\n\nPrinted **locally**.\n' | tm20-set --dry print md -
+tm20-set --dry --png previews print md receipt.md  # Preview, no printer
+tm20-set --output receipt.bin print md receipt.md # ESC/POS file, no printer
+tm20-set print md receipt.md                      # Print over USB
+tm20-set --tcp 192.168.1.50:9100 print md receipt.md # Print over TCP
+tm20 --dry text "Hello, tape!"                    # Low-level protocol, no printer
 ```
 
-For libraries, `FaceTable::portable()` supplies the CLI's embedded font profile;
-reuse it across documents. `tm20-set`'s default `portable-fonts` feature can be
-disabled when supplying your own fonts. `tm20_md::image_bytes` reads local files
-only (not a path sandbox); a custom loader owns any network policy.
+Installs **both** `tm20-set` (Markdown) and `tm20` (ESC/POS). Options precede
+the command; `--help` lists them. `--png` alone still prints—pair it with
+`--dry` for a preview. Remote images require `--allow-remote-images`.
+
+## Rust library
+
+```sh
+cargo add tm20-md@1 tm20-set@1 tm20@1
+```
+
+Render Markdown to printer-ready bytes without opening a printer:
+
+```rust
+use std::path::Path;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let faces = tm20_set::FaceTable::portable()?;
+    let sheet = tm20_md::sheet(
+        "# Hello\n\nPrinted **locally**.",
+        tm20_set::Measure::TAPE,
+        |url| tm20_md::image_bytes(Path::new("."), url),
+    )?;
+    let document = tm20_set::lower(&sheet, &faces)?;
+    let bytes = tm20::encode(&document)?;
+    std::fs::write("receipt.bin", bytes)?;
+    Ok(())
+}
+```
+
+For protocol-only use, `cargo add tm20@1`. Send encoded bytes through a
+`tm20::Transport` (`Usb`, `Tcp`, or `Serial`); failed delivery may be partial,
+so do not automatically resend.
+
+Reuse the font table across documents. `tm20-set`'s default `portable-fonts`
+feature supplies the CLI's fonts; disable it when supplying your own.
+`image_bytes` reads local files only (not a path sandbox); a custom loader
+owns any network policy.
 Errors are non-exhaustive typed enums: use their fields/codes, not parsed prose.
+
+## Markdown support
 
 | Feature | Supported behavior | Specification |
 | --- | --- | --- |
@@ -51,6 +88,8 @@ Errors are non-exhaustive typed enums: use their fields/codes, not parsed prose.
 | Math | LaTeX via RaTeX: `\(inline\)`, `\[display\]`; display math outside inline styling/tables; dollar delimiters disabled; embedded KaTeX glyphs only; unsupported formulas and host-font fallback reject | Extension outside CommonMark/GFM |
 | Smart punctuation | Curly quotes, en/em dashes, ellipses in prose | Extension outside CommonMark/GFM |
 | Other extensions | No YAML metadata, CSS, definition lists, or image-size attributes | Not enabled |
+
+## Crates
 
 | Crate | Responsibility |
 | --- | --- |
