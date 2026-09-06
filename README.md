@@ -146,7 +146,7 @@ and Zig, add the Rust musl targets, then:
 Outputs are under `target/<target>/release/`. These build checks do not establish
 hardware compatibility; OS packaging and Linux test suites are outside this repository's current scope.
 
-Agent workflow: [SKILL.md](https://github.com/bjornpagen/tm20/blob/main/.claude/skills/tm20/SKILL.md).
+Markdown authoring: [SKILL.md](https://github.com/bjornpagen/tm20/blob/main/skills/tm20/SKILL.md).
 
 Device-free parallel tests: `cargo nextest run --workspace --locked`.
 Doctests: `cargo test --workspace --locked --doc`. Each visual fixture is an independent test.
