@@ -1,110 +1,86 @@
 ---
 name: tm20
-description: Author, preview, or print Markdown receipts and tapes with this repository's Epson TM-T20III typesetter. Use for thermal-printer output, not generic Markdown editing.
+description: Author or revise Markdown receipts, reading tapes, and checklists for tm20. Use its supported Markdown subset and narrow monochrome design language; avoid constructs that cannot render faithfully.
 ---
 
-# Author and print a tape
+# Design Markdown for thermal tape
 
-Use the installed `tm20-set` command (`cargo install tm20-cli --locked`, Rust
-1.91+). When developing this checkout, substitute
-`cargo run --locked --bin tm20-set --` from the workspace root.
-Read [README.md](../../../README.md) for supported features and deviations
-when needed; do not load the corpus or vendor manuals for an ordinary print.
+Craft a `.md` document for a 576-dot-wide, monochrome thermal tape. Length can
+grow; width cannot. tm20 is a strict printable subset of CommonMark/GFM, not
+a browser: unsupported constructs, missing glyphs, and clipped content fail.
 
-## Choose the requested effect
+## Design language
 
-- **Print requested:** print directly; do not add an unrequested preview or
-  confirmation step. That request authorizes the specified job, not a test
-  catalog, device reconfiguration, or repeat copies.
-- **Preview requested:** use `--dry --png DIR`, then inspect the PNG.
-  `--png` alone also prints.
-- **Write/edit only:** create the Markdown; do not print implicitly.
-  `--dry` alone validates and encodes without writing previews or opening USB.
+- Prefer one short `#` masthead, then a clear reading order: context, substance,
+  conclusion. Use `##` for sections; H3–H6 do not create smaller visual levels.
+- Be economical, not cryptic. Use short paragraphs and concrete labels. Keep
+  necessary detail; move supporting sources into notes rather than deleting it.
+- Let typography do the work: bold for key facts, italic for secondary emphasis,
+  monospace for literal identifiers. Avoid walls of bold, all-caps paragraphs,
+  decorative emoji, ASCII boxes, and space-padded pseudo-columns.
+- Use two-column tables for label/value pairs and prices. Reserve three columns
+  for genuinely compact data. Prefer stacked labeled paragraphs for wide records.
+- Use a rule before a total or major transition, not between every paragraph.
+  One blank line separates blocks; extra blank lines are not layout controls.
+- Receipts: masthead → context → items → total. Reading tapes: short sections
+  and prose. Checklists: one concrete action per task. Adapt the structure to
+  the content; do not force every document into a receipt.
 
-Author new tapes and figures in a unique temporary directory under `/tmp`,
-not in the repo. Keep supplied files and existing fixtures in place.
+## Supported Markdown
 
-```sh
-# Print one file; --usb-serial S may precede print to select a USB device.
-tm20-set print md /tmp/TAPE_DIR/tape.md
+| Construct | Rendering | Authoring constraints |
+| --- | --- | --- |
+| Paragraphs | 11 pt sans; word wrapping, no hyphenation | Avoid long unbroken strings. Source soft breaks become spaces; use a trailing backslash or two spaces for a hard break. |
+| Headings | H1: 18 pt; H2–H6: 11 pt bold | Nonempty plain text only: no emphasis, code, links, images, or math. Prefer ATX `#` syntax. |
+| Inline styles | `*italic*`, `**bold**`, combinations, `~~strike~~` | Styles can nest; strikethrough spans wrapped lines. Keep them out of headings. |
+| Code spans | Monospace; whitespace normalized | For short literals, not manual alignment. Fitting spans stay unbroken. |
+| Code blocks | Fenced or indented monospace | No highlighting or wrapping. Split long lines explicitly; indentation consumes width. |
+| Lists | Dash bullets; ordered starts and `.` / `)` delimiters preserved | At most three list levels. Blank lines distinguish loose from tight lists. |
+| Tasks | `- [ ]` and `- [x]` boxes | Use list-item syntax, not free-standing bracket decorations. |
+| Quotes | Indented blocks | At most three quote levels, counted separately from list levels. Nesting reduces usable width. |
+| Rules | Full-tape two-dot line | Put blank lines around `---`; immediately beneath text it can become a Setext heading. |
+| Tables | Two or three columns; bold header; left/right alignment | Use `---` or `---:`; never centered `:---:`. Every row needs exactly the header's cell count. Cells contain inline content, not nested blocks. |
+| Links | Italic labels; numbered destination endnotes when needed | Inline, reference, angle, and recognized bare links work. Define references; use consistent titles for repeated destinations. Long URLs can overflow even in notes. |
+| Footnotes | First-use numbering shared with link notes; multiblock definitions | Define every `[^name]`. Unused definitions disappear. Indent continuation blocks. |
+| Images | Standalone PNG/JPEG, shrunk to fit and dithered; never upscaled | Image alone in its paragraph, not inside a link or table. Prefer local assets; remote URLs need permission outside the document. Alt text is not printed: put meaningful captions in a separate paragraph. |
+| Math | LaTeX via RaTeX: `\(inline\)` and `\[display\]` | Dollars are currency, not delimiters. No heading math; display math belongs in a separate paragraph, outside styles, links, and tables. Unsupported formulas/glyphs fail. |
+| Text conventions | Escapes/entities decoded; smart quotes, dashes, ellipses in prose | Use code for literal punctuation. Glyph coverage is finite; do not assume emoji or arbitrary scripts are available. |
 
-# No printer; writes PREVIEW_DIR/tape.png at 2×.
-tm20-set --dry --png /tmp/PREVIEW_DIR print md /tmp/TAPE_DIR/tape.md
+## Footguns to avoid
+
+- No raw HTML, including comments or `<br>`. No CSS, YAML front matter,
+  definition-list extension, image-size attributes, or browser layout tricks.
+- Escape literal table pipes as `\|`, even inside code spans. Backticks alone
+  do not protect a pipe from splitting a cell.
+- Escape literal square brackets (`\[` and `\]`) when they are not links,
+  footnotes, or tasks; apparent references without definitions reject.
+- Keep amount columns right-aligned with consistent decimal precision. Their
+  digits are tabular, but there is no spreadsheet-style number formatting.
+- Narrow a table by shortening labels or moving detail into prose, not by
+  dropping data. Missing glyphs or overflow are not invitations to invent
+  substitutes or silently omit content.
+
+## Receipt idiom
+
+A header-only table after a rule gives the total the same alignment as the
+items, with automatic header emphasis. Keep the separator row even without
+body rows:
+
+```markdown
+# Corner shop
+
+Order 42\
+5 September 2026
+
+| Item | Amount |
+| --- | ---: |
+| Coffee | 6.00 |
+| Bread | 4.50 |
+
+---
+
+| Total | 10.50 |
+| --- | ---: |
+
+Thank you.
 ```
-
-Replace placeholders with actual paths. Options precede `print`. A directory
-prints immediate lowercase `*.md` entries sorted by path, one cut each;
-select a directory only when the user wants the batch. Preview also works
-for directories. Same-named PNGs are overwritten. Built-ins: `ticket`,
-`prose`, `helvetica`, `suite`; bare `print` lists them.
-
-Use `--help` for the generated CLI reference. USB is default;
-`--tcp HOST:PORT` selects raw TCP; `--serial-port PATH --baud RATE` selects
-a serial port. `--serial` remains a USB serial-number alias.
-Destinations conflict with `--dry`, `--output`, and `--fake-delivery`.
-`--output FILE` writes ESC/POS instead of printing; `--output -` emits only
-bytes on stdout. `print md -` reads stdin; relative images use `--base-dir DIR`
-or the working directory. All inputs prepare before any output or connection.
-
-## Write for 576 dots
-
-- Prefer one short `#` masthead. `##`–`######` are all the same bold body
-  size. Headings must be nonempty plain text. Use short paragraphs with one
-  blank line between blocks; extra blank lines add no space. A trailing
-  backslash gives address-style hard breaks.
-- Emphasis, strong, `~~strikethrough~~`, code, lists, tasks, and quotes work.
-  Nest lists/quotes at most three deep. Code blocks never wrap: split long
-  lines explicitly. Missing glyphs and clipped content reject.
-- Tables have two/three columns. Use `---:` for numbers with fixed decimals;
-  `:---:` rejects. Every row must have the same cell count. A rule then
-  header-only total table is the receipt idiom. Literal cell pipes need
-  `\|`, including inside code spans.
-- Labeled links make destination endnotes; duplicate destinations need
-  consistent titles. Bare URLs normally need no note. Footnotes share their
-  number sequence; unused definitions disappear, undefined references reject.
-  Keep links and styled text out of headings.
-- Math: `\(inline\)` or `\[display\]`; dollars are currency. No math in
-  headings; display math must be outside inline styling, links, and tables.
-  Escape literal brackets; bare brackets can be reference syntax.
-- PNG/JPEG images stand alone in a paragraph. Relative paths resolve beside
-  the Markdown. HTTP(S) images are denied by default; add the leading
-  `--allow-remote-images` only when the user intends network access, never
-  just to silence a validation error. With that opt-in, `--dry` also fetches.
-  Images shrink to local width, never upscale, and print without alt text.
-  Prefer high contrast.
-- No raw HTML/comments, YAML front matter, or CSS. Do not
-  paste GitHub badges or HTML layout. `---` immediately under text can
-  be a Setext heading; surround intended rules with blank lines.
-
-## Failure boundaries
-
-The complete batch encodes before any printer opens: parsing/rendering errors send
-nothing. Read the error code, filename, source line/character column, excerpt,
-and reason. Correct that source construct; `--dry` checks a repair without
-printing. Preserve the intended content; do not weaken validation,
-substitute fonts, or silently drop rejected material.
-
-Image fetching uses standard proxy environment variables and macOS manual
-HTTP(S) proxies; Linux uses environment variables. For proxy bypasses use
-`NO_PROXY`. Unsupported macOS automatic/SOCKS settings need an explicit
-proxy URL (`socks5h://` for proxy-side DNS). Do not repair network errors by
-clearing proxies, disabling TLS checks, or changing VPN/system routing.
-
-After a write/completion failure, delivery may be partial: never resend
-automatically; establish what printed or ask before another copy. `hello`,
-`test all`, status, and debug are device operations, not harmless validation.
-
-Portable embedded fonts are the default on macOS, Fedora, and gokrazy.
-Library callers use `tm20_md::sheet` → `tm20_set::lower` → `tm20::encode`,
-with a reused `tm20_set::FaceTable::portable()`. `image_bytes` is local-only,
-not a path sandbox; custom loaders own access/network policy.
-Use `--fonts macos` only when Helvetica/Menlo typography is requested and
-those system fonts exist. Math uses embedded KaTeX glyphs, not host fallback.
-USB targets the TM-T20III (`04b8:0e28`). Keep disposable tapes and generated
-output out of commits.
-
-Both executables run once in the foreground. The OS owns supervision;
-do not add daemon code or service artifacts to an ordinary print task.
-`--failure-exit-code 125` makes a valid job's failure stop gokrazy supervision;
-syntax errors still return 1, signals remain signals. Restarting after partial
-delivery can duplicate paper, regardless of exit policy.
