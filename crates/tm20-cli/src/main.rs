@@ -17,7 +17,7 @@ pub(crate) type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 fn usage() {
     let ids: Vec<_> = catalog().iter().map(|c| c.id).collect();
     eprintln!(
-        "tm20-set [--serial S] [--dry] [--png DIR] [--fake-delivery DIR] print [{}|all|md <path>]\n  sheets: {}\n  md path may be a file or a directory of *.md\n  --png writes DIR/<name>.png at 2× (overwrites that file) next to USB; --dry stays off the wire\n  --fake-delivery writes DIR/<name>.bin (encoded job) and never opens USB\n  faces are Helvetica and Menlo from /System/Library/Fonts",
+        "tm20-set [--serial S] [--dry] [--png DIR] [--fake-delivery DIR] [--allow-remote-images] print [{}|all|md <path>]\n  sheets: {}\n  md path may be a file or a directory of *.md\n  --png writes DIR/<name>.png at 2× (overwrites that file) next to USB; --dry never opens USB\n  --fake-delivery writes DIR/<name>.bin (encoded job) and never opens USB\n  remote images are denied unless --allow-remote-images is set (also applies to --dry)\n  faces are Helvetica and Menlo from /System/Library/Fonts",
         ids.join("|"),
         ids.join(", ")
     );
@@ -58,13 +58,14 @@ fn run() -> Result<()> {
     match &parsed.mode {
         OutputMode::Deliver { selector, .. } => {
             let selector = selector.clone();
-            output::run(&parsed.selection, &parsed.mode, move || {
+            output::run(&parsed.selection, &parsed.mode, parsed.images, move || {
                 Usb::open(selector.as_deref()).map_err(Into::into)
             })
         }
         OutputMode::Dry { .. } | OutputMode::Fake { .. } => output::run(
             &parsed.selection,
             &parsed.mode,
+            parsed.images,
             || -> Result<tm20::Memory> {
                 Err("dry/fake-delivery must not open a transport".into())
             },

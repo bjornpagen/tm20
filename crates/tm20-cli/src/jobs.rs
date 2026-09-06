@@ -10,6 +10,7 @@ use tm20_set::Measure;
 
 use crate::Result;
 use crate::args::Selection;
+use crate::images::ImagePolicy;
 use crate::kit::system_table;
 use crate::sheets::{Case, catalog, find};
 
@@ -81,11 +82,11 @@ pub fn enumerate(selection: &Selection) -> Result<Vec<JobSpec>> {
 }
 
 /// Prepare every spec. The first failure stops the batch; nothing is delivered.
-pub fn prepare_all(specs: &[JobSpec]) -> Result<Vec<PreparedJob>> {
-    specs.iter().map(prepare).collect()
+pub fn prepare_all(specs: &[JobSpec], images: ImagePolicy) -> Result<Vec<PreparedJob>> {
+    specs.iter().map(|spec| prepare(spec, images)).collect()
 }
 
-fn prepare(spec: &JobSpec) -> Result<PreparedJob> {
+fn prepare(spec: &JobSpec, images: ImagePolicy) -> Result<PreparedJob> {
     match spec {
         JobSpec::Catalog(case) => {
             let document = case.doc()?;
@@ -101,7 +102,7 @@ fn prepare(spec: &JobSpec) -> Result<PreparedJob> {
             })
         }
         JobSpec::Markdown(path) => {
-            let document = md_document(path)?;
+            let document = md_document(path, images)?;
             let bytes = encode(&document)?;
             let name = path
                 .file_stem()
@@ -118,11 +119,13 @@ fn prepare(spec: &JobSpec) -> Result<PreparedJob> {
     }
 }
 
-fn md_document(path: &Path) -> Result<Document> {
+fn md_document(path: &Path, images: ImagePolicy) -> Result<Document> {
     let src = fs::read_to_string(path)?;
     let base = path.parent().unwrap_or_else(|| Path::new("."));
-    let sheet = tm20_md::sheet(&src, Measure::TAPE, |dest| crate::images::load(base, dest))
-        .map_err(|e| format!("{}: [{}] {e}", path.display(), e.code()))?;
+    let sheet = tm20_md::sheet(&src, Measure::TAPE, |dest| {
+        crate::images::load(images, base, dest)
+    })
+    .map_err(|e| format!("{}: [{}] {e}", path.display(), e.code()))?;
     let faces = system_table()?;
     Ok(tm20_set::lower(&sheet, &faces)
         .map_err(|e| format!("{}: [{}] {e}", path.display(), e.code()))?)
@@ -236,6 +239,6 @@ mod tests {
         fs::create_dir(tmp.0.join("a.md")).unwrap();
         fs::write(tmp.0.join("b.md"), "# ok\n").unwrap();
         let specs = enumerate(&Selection::Markdown(tmp.0.clone())).unwrap();
-        assert!(prepare_all(&specs).is_err());
+        assert!(prepare_all(&specs, ImagePolicy::default()).is_err());
     }
 }

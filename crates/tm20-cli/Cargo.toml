@@ -13,6 +13,10 @@ path = "src/main.rs"
 tm20 = { workspace = true }
 tm20-set = { workspace = true }
 tm20-md = { workspace = true }
+reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "rustls", "socks", "system-proxy"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+system-configuration = "0.7"
 
 [lints]
 workspace = true

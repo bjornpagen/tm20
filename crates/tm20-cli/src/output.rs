@@ -18,16 +18,18 @@ use tm20_set::preview_pngs;
 
 use crate::Result;
 use crate::args::{OutputMode, Selection};
+use crate::images::ImagePolicy;
 use crate::jobs::{PreparedJob, enumerate, prepare_all};
 
 /// Enumerate, prepare the whole batch, then interpret. Device open is last.
 pub fn run<T: Transport>(
     selection: &Selection,
     mode: &OutputMode,
+    images: ImagePolicy,
     open: impl FnOnce() -> Result<T>,
 ) -> Result<()> {
     let specs = enumerate(selection)?;
-    let jobs = prepare_all(&specs)?;
+    let jobs = prepare_all(&specs, images)?;
     execute(&jobs, mode, open)
 }
 
@@ -383,6 +385,7 @@ mod tests {
         let err = run(
             &Selection::Markdown(tmp.0.clone()),
             &deliver(None),
+            ImagePolicy::default(),
             move || {
                 opens_c.set(opens_c.get() + 1);
                 Ok(Memory::new())

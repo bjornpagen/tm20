@@ -4,6 +4,9 @@ use std::fmt;
 
 #[derive(Debug)]
 pub enum Error {
+    RemoteImageDenied {
+        destination: String,
+    },
     At {
         location: tm20_set::SourceLocation,
         cause: Box<Error>,
@@ -31,6 +34,10 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Error::RemoteImageDenied { destination } => write!(
+                f,
+                "remote image {destination:?} is disabled by the image policy\nhelp: use a local PNG/JPEG; pass --allow-remote-images only when network access is intended"
+            ),
             Error::At { location, cause } => write!(f, "{location}\n{cause}"),
             Error::Unsupported {
                 feature,
@@ -89,6 +96,7 @@ impl Error {
     pub fn code(&self) -> &'static str {
         match self {
             Self::At { cause, .. } => cause.code(),
+            Self::RemoteImageDenied { .. } => "image.remote-denied",
             Self::Set(cause) => cause.code(),
             Self::Unsupported { .. } => "markdown.unsupported",
             Self::Resource { .. } | Self::Image => "image.failed",

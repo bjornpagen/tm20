@@ -24,7 +24,7 @@ repair guidance. Code and tests define behavior.
 | Table pipes | Literal pipes must be escaped, including inside code spans | [GFM](https://github.github.com/gfm/#tables-extension-) |
 | Links | Italic labels; numbered destination endnotes when nonredundant; destinations deduplicate; undefined references and conflicting titles reject | [CommonMark](https://spec.commonmark.org/0.31.2/#links) |
 | Autolinks | Angle links, recognized bare URLs and email; normally no redundant endnote | [CommonMark](https://spec.commonmark.org/0.31.2/#autolinks), [GFM](https://github.github.com/gfm/#autolinks-extension-) |
-| Images | Standalone PNG/JPEG; local files or HTTP(S) via system curl; shrink to local width, dither to monochrome; no printed alt text | [CommonMark](https://spec.commonmark.org/0.31.2/#images) (restricted) |
+| Images | Standalone PNG/JPEG; local files by default, HTTP(S) only with `--allow-remote-images`; shrink to local width, dither to monochrome; no printed alt text | [CommonMark](https://spec.commonmark.org/0.31.2/#images) (restricted) |
 | Raw HTML | Rejected, including comments; escaped HTML and code literals remain text | [CommonMark](https://spec.commonmark.org/0.31.2/#raw-html), [HTML blocks](https://spec.commonmark.org/0.31.2/#html-blocks) (unsupported) |
 | Strikethrough | Strike line across text, including nested styles and wrapped lines | [GFM](https://github.github.com/gfm/#strikethrough-extension-) |
 | Footnotes | Named references and multiblock definitions; first-use numbering shared with link notes; unused omitted, undefined references reject | Extension outside CommonMark/GFM |
@@ -37,7 +37,15 @@ repair guidance. Code and tests define behavior.
 | [tm20](crates/tm20/src/lib.rs) | ESC/POS encoding, raster bands, barcodes/symbols, USB/serial/TCP/memory transports. CODE128-C encoding and DataMatrix model support remain unverified |
 | [tm20-set](crates/tm20-set/src/lib.rs) | Typed sheets, shared parsed fonts, measured layout, rasterization, lossless banding, PNG previews |
 | [tm20-md](crates/tm20-md/src/lib.rs) | Strict Markdown parsing, source diagnostics, math and local image loading |
-| [tm20-cli](crates/tm20-cli/src/main.rs) | `tm20-set` executable: full batch preparation before USB opens; device-free `--dry` previews; HTTP(S) image loading; macOS Helvetica/Menlo fonts |
+| [tm20-cli](crates/tm20-cli/src/main.rs) | `tm20-set` executable: full batch preparation before USB opens; device-free `--dry` previews; opt-in HTTP(S) images; macOS Helvetica/Menlo fonts |
+
+| Image network policy | Behavior |
+| --- | --- |
+| Permission | Denied before network access in every output mode. Leading `--allow-remote-images` opts in, including with `--dry` |
+| Proxy | Rust `reqwest`; `HTTP_PROXY`/`HTTPS_PROXY`, then `ALL_PROXY` (lowercase also accepted; uppercase wins). `NO_PROXY`/`no_proxy` controls bypasses |
+| System settings | macOS manual HTTP(S) proxies when no explicit environment proxy applies. Linux uses proxy environment variables, not GNOME/KDE settings. For consistent bypass rules, set `NO_PROXY`; macOS system exception lists are not imported |
+| Unsupported configuration | macOS PAC/WPAD or system SOCKS settings require an explicit proxy environment variable; lookup/configuration failures error. `socks5h://` resolves destination names through the proxy |
+| Boundaries | Proxy policy checked at each redirect; HTTP(S) only, ≤10 redirects, no direct retry after proxy failure. OS controls VPN/WireGuard routing; no tunnel management or kill-switch guarantees |
 
 Agent workflow: [SKILL.md](.claude/skills/tm20/SKILL.md).
 

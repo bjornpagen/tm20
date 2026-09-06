@@ -6,6 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::Result;
+use crate::images::ImagePolicy;
 
 /// How the prepared batch is interpreted. Selection never carries this.
 ///
@@ -71,6 +72,7 @@ pub enum Selection {
 pub struct Parsed {
     pub mode: OutputMode,
     pub selection: Selection,
+    pub images: ImagePolicy,
 }
 
 pub fn parse<I, S>(args: I) -> Result<Parsed>
@@ -82,6 +84,7 @@ where
     let mut dry = false;
     let mut png = None;
     let mut fake = None;
+    let mut images = ImagePolicy::default();
     let mut rest = Vec::new();
     let mut raw = args.into_iter().map(|s| s.as_ref().to_owned());
     while let Some(a) = raw.next() {
@@ -90,6 +93,7 @@ where
                 serial = Some(take_value(&mut raw, "--serial needs a value")?);
             }
             "--dry" => dry = true,
+            "--allow-remote-images" => images = ImagePolicy::AllowRemote,
             "--png" => {
                 png = Some(PathBuf::from(take_value(
                     &mut raw,
@@ -153,7 +157,11 @@ where
         }
     };
 
-    Ok(Parsed { mode, selection })
+    Ok(Parsed {
+        mode,
+        selection,
+        images,
+    })
 }
 
 fn take_value(raw: &mut impl Iterator<Item = String>, err: &'static str) -> Result<String> {
@@ -177,6 +185,18 @@ mod tests {
 
     fn parse_err(args: &[&str]) -> String {
         parse(args).unwrap_err().to_string()
+    }
+
+    #[test]
+    fn remote_images_require_explicit_permission_in_every_mode() {
+        for options in [vec![], vec!["--dry"], vec!["--fake-delivery", "/tmp/sink"]] {
+            let mut args = options.clone();
+            args.extend(["print", "md", "tape.md"]);
+            assert_eq!(parse_ok(&args).images, ImagePolicy::LocalOnly);
+            let mut args = options;
+            args.extend(["--allow-remote-images", "print", "md", "tape.md"]);
+            assert_eq!(parse_ok(&args).images, ImagePolicy::AllowRemote);
+        }
     }
 
     #[test]

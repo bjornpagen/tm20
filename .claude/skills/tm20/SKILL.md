@@ -57,9 +57,11 @@ for directories. Same-named PNGs are overwritten. Built-ins: `ticket`,
   headings; display math must be outside inline styling, links, and tables.
   Escape literal brackets; bare brackets can be reference syntax.
 - PNG/JPEG images stand alone in a paragraph. Relative paths resolve beside
-  the Markdown. System curl fetches HTTP(S) images even with `--dry`;
-  validation/previews are device-free, not network-free. Images shrink to
-  local width, never upscale, and print without alt text. Prefer high contrast.
+  the Markdown. HTTP(S) images are denied by default; add the leading
+  `--allow-remote-images` only when the user intends network access, never
+  just to silence a validation error. With that opt-in, `--dry` also fetches.
+  Images shrink to local width, never upscale, and print without alt text.
+  Prefer high contrast.
 - No raw HTML/comments, YAML front matter, or CSS. Do not
   paste GitHub badges or HTML layout. `---` immediately under text can
   be a Setext heading; surround intended rules with blank lines.
@@ -71,6 +73,12 @@ nothing. Read the error code, filename, source line/character column, excerpt,
 and reason. Correct that source construct; `--dry` checks a repair without
 printing. Preserve the intended content; do not weaken validation,
 substitute fonts, or silently drop rejected material.
+
+Image fetching uses standard proxy environment variables and macOS manual
+HTTP(S) proxies; Linux uses environment variables. For proxy bypasses use
+`NO_PROXY`. Unsupported macOS automatic/SOCKS settings need an explicit
+proxy URL (`socks5h://` for proxy-side DNS). Do not repair network errors by
+clearing proxies, disabling TLS checks, or changing VPN/system routing.
 
 After a write/completion failure, delivery may be partial: never resend
 automatically; establish what printed or ask before another copy. `hello`,

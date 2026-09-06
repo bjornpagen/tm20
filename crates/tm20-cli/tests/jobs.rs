@@ -14,45 +14,6 @@ fn write_md(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
 }
 
 #[test]
-fn remote_image_prepares_and_fake_delivers_without_usb() {
-    use std::io::{Read, Write};
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let url = format!("http://{}/image.png", listener.local_addr().unwrap());
-    let server = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        let mut request = Vec::new();
-        while !request.ends_with(b"\r\n\r\n") {
-            let mut byte = [0];
-            assert_eq!(stream.read(&mut byte).unwrap(), 1);
-            request.push(byte[0]);
-        }
-        let image = include_bytes!("../../tm20-md/fixtures/grid.png");
-        write!(
-            stream,
-            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            image.len()
-        )
-        .unwrap();
-        stream.write_all(image).unwrap();
-        assert!(request.starts_with(b"GET /image.png HTTP/1.1\r\n"));
-    });
-    let dir = uniq_temp("remote-image");
-    let input = write_md(&dir, "remote.md", &format!("![grid]({url})"));
-    let output = dir.join("delivery");
-    let result = run(&[
-        "--fake-delivery",
-        output.to_str().unwrap(),
-        "print",
-        "md",
-        input.to_str().unwrap(),
-    ]);
-    assert!(result.status.success(), "{}", stderr(&result));
-    server.join().unwrap();
-    assert!(!fs::read(output.join("remote.bin")).unwrap().is_empty());
-    fs::remove_dir_all(dir).unwrap();
-}
-
-#[test]
 fn invalid_markdown_reports_file_and_position_before_delivery() {
     let dir = uniq_temp("diagnostic");
     let input = write_md(&dir, "bad.md", "valid\n\n## bad *heading*");
