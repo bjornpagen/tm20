@@ -1,7 +1,7 @@
 //! Protocol CLI. Dry never opens USB. `status`/`id` print planned bytes;
 //! `debug`/`list` return an explicit not-applicable error.
 //!
-//! [`parse`] is pure; [`wait_done`] is the production completion
+//! Argument parsing is pure; [`wait_done`] is the production completion
 //! helper (ReplyReader + exact requested ID). Delivery writes through
 //! [`ReplyReader`]; tests inject [`tm20::Memory`]. Dry never constructs USB.
 

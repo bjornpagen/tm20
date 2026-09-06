@@ -6,6 +6,18 @@
 //!
 //! Image pages are [`Raster`] (immutable packed 1-bit). Wire banding and
 //! scale live on [`Graphics`]; `pack` remains a compatibility wrapper.
+//!
+//! Encode without opening a printer:
+//! ```
+//! let document = tm20::Document::new([
+//!     tm20::Command::Init,
+//!     tm20::Command::Text("Hello, tape!\n".into()),
+//!     tm20::Command::Cut,
+//! ]);
+//! let bytes = tm20::encode(&document)?;
+//! assert!(bytes.starts_with(&[0x1b, 0x40]));
+//! # Ok::<(), tm20::EncodeError>(())
+//! ```
 
 pub mod barcode;
 pub mod command;

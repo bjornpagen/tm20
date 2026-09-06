@@ -76,7 +76,7 @@ pub struct Cli {
     connection: ConnectionArgs,
     #[usage(arg_group)]
     output: Option<OutputChoice>,
-    /// Write DIR/<name>.png previews at 2×; alone this still prints.
+    /// Write DIR/NAME.png previews at 2×; alone this still prints.
     #[usage(long, value_name = "DIR")]
     png: Option<PathBuf>,
     /// Explicitly permit HTTP(S) image fetching, including in dry mode.
@@ -99,7 +99,7 @@ pub struct Cli {
 enum OutputChoice {
     /// Validate and encode, without opening a printer.
     Dry,
-    /// Write one encoded job per DIR/<name>.bin; no printer.
+    /// Write one encoded job per DIR/NAME.bin; no printer.
     #[usage(value_name = "DIR")]
     FakeDelivery(PathBuf),
     /// Write concatenated ESC/POS to FILE, or '-' for stdout; no printer.

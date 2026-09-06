@@ -49,7 +49,24 @@ fn fixture_case(stem: &str) {
     assert!(!bytes.is_empty(), "{}", path.display());
 }
 
-include!(concat!(env!("OUT_DIR"), "/paper_cases.rs"));
+include!("common/cases.rs");
+
+cases! { fixtures, fixture_case;
+    case_01_prose => "01-prose",
+    case_02_heads => "02-heads",
+    case_03_rule => "03-rule",
+    case_04_code => "04-code",
+    case_05_quotes => "05-quotes",
+    case_06_lists => "06-lists",
+    case_07_tasks => "07-tasks",
+    case_08_emphasis => "08-emphasis",
+    case_09_notes => "09-notes",
+    case_10_figure => "10-figure",
+    case_11_tables => "11-tables",
+    case_12_math => "12-math",
+    case_13_sprites => "13-sprites",
+    case_14_fga => "14-fga",
+}
 
 #[test]
 fn fixture_inventory_is_complete() {
@@ -60,7 +77,7 @@ fn fixture_inventory_is_complete() {
     assert_eq!(
         stems,
         fixtures::STEMS,
-        "rebuild to discover changed paper fixtures"
+        "update cases! registrations for changed paper fixtures"
     );
 }
 

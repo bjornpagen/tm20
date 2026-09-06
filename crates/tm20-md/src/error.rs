@@ -3,6 +3,7 @@
 use std::fmt;
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Error {
     RemoteImageDenied {
         destination: String,

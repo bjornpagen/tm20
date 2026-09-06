@@ -1,21 +1,28 @@
 [package]
 name = "tm20-cli"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license = "0BSD AND OFL-1.1"
-publish.workspace = true
+repository.workspace = true
+readme.workspace = true
+description = "Strict Markdown-to-thermal-tape and ESC/POS command-line tools for Epson TM-T20III"
+keywords = ["markdown", "escpos", "thermal", "printer", "cli"]
+categories = ["command-line-utilities", "text-processing"]
 
 [[bin]]
 name = "tm20-set"
 path = "src/main.rs"
+doc = false
 
 [[bin]]
 name = "tm20"
 path = "src/protocol.rs"
+doc = false
 
 [dependencies]
 tm20 = { workspace = true }
-tm20-set = { workspace = true }
+tm20-set = { workspace = true, features = ["portable-fonts"] }
 tm20-md = { workspace = true }
 usage = { workspace = true }
 reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "rustls", "socks", "system-proxy"] }

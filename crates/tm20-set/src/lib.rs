@@ -10,6 +10,22 @@
 //! [`ResolvedFaces`] once. Coordinates are [`Advance`] (26.6) and
 //! [`InkBounds`]; notes raise by translating a [`ShapedRun`], not by a
 //! parallel note field on [`Span`].
+//!
+//! The default `portable-fonts` feature provides `FaceTable::portable()` and
+//! `FONT_LICENSES`. Disable default features to supply only your own fonts.
+//! ```
+//! # #[cfg(feature = "portable-fonts")]
+//! # {
+//! let faces = tm20_set::FaceTable::portable()?;
+//! let mut sheet = tm20_set::SheetBuilder::new(tm20_set::Measure::TAPE);
+//! sheet.push_frame(tm20_set::Frame::Text(tm20_set::TextBlock::plain(
+//!     tm20_set::Cut::Roman, tm20_set::TextSize::Pt11, "Hello, tape!",
+//! )));
+//! let document = tm20_set::lower(&sheet.finish()?, &faces)?;
+//! assert!(!tm20::encode(&document)?.is_empty());
+//! # }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 mod cols;
 mod compose;
@@ -19,6 +35,8 @@ mod frame;
 mod geometry;
 mod leading;
 mod lower;
+#[cfg(feature = "portable-fonts")]
+mod portable;
 mod preview;
 mod size;
 mod strike;
@@ -41,6 +59,8 @@ pub use frame::{
 pub use geometry::{Advance, Clip, InkBounds, Row, RowRange};
 pub use leading::{GRID, GridSkip, HANG, Leading, NOTE_RULE, TASK_BOX, pt_dots};
 pub use lower::{lower, lower_bands, lower_page};
+#[cfg(feature = "portable-fonts")]
+pub use portable::FONT_LICENSES;
 pub use preview::{preview_png, preview_pngs, preview_raster};
 pub use size::{DPI, DisplaySize, TextSize};
 

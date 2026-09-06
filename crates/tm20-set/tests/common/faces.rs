@@ -34,7 +34,7 @@ pub fn lock_text() -> String {
 }
 
 pub fn lock_path() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../tm20-md/tests/faces.lock")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/faces.lock")
 }
 
 /// Fail if either house face is absent or `faces.lock` disagrees. Never skip.

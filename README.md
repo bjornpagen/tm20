@@ -6,6 +6,26 @@ missing glyphs, and clipped content are errors with source context—not fallbac
 Diagnostics include error codes, source lines/character columns, excerpts, and
 repair guidance. Code and tests define behavior.
 
+Rust 1.91+; stable toolchain. Install both commands with
+`cargo install tm20-cli --locked`.
+
+| Cargo dependency | Use |
+| --- | --- |
+| `cargo add tm20` | Typed ESC/POS and USB/serial/TCP transport |
+| `cargo add tm20-md tm20-set tm20` | Markdown → portable fonts → ESC/POS; [complete example](https://github.com/bjornpagen/tm20/blob/main/crates/tm20-md/examples/markdown.rs) |
+
+```sh
+tm20-set --dry print md receipt.md   # Validate without a printer
+tm20-set print md receipt.md         # Print over USB
+tm20-set --output receipt.bin print md receipt.md  # Encode without delivery
+```
+
+For libraries, `FaceTable::portable()` supplies the CLI's embedded font profile;
+reuse it across documents. `tm20-set`'s default `portable-fonts` feature can be
+disabled when supplying your own fonts. `tm20_md::image_bytes` reads local files
+only (not a path sandbox); a custom loader owns any network policy.
+Errors are non-exhaustive typed enums: use their fields/codes, not parsed prose.
+
 | Feature | Supported behavior | Specification |
 | --- | --- | --- |
 | Paragraphs | 11 pt selected sans face; word wrapping, no hyphenation | [CommonMark](https://spec.commonmark.org/0.31.2/#paragraphs) |
@@ -34,10 +54,10 @@ repair guidance. Code and tests define behavior.
 
 | Crate | Responsibility |
 | --- | --- |
-| [tm20](crates/tm20/src/lib.rs) | ESC/POS encoding, raster bands, barcodes/symbols, USB/serial/TCP/memory transports. CODE128-C encoding and DataMatrix model support remain unverified |
-| [tm20-set](crates/tm20-set/src/lib.rs) | Typed sheets, shared parsed fonts, measured layout, rasterization, lossless banding, PNG previews |
-| [tm20-md](crates/tm20-md/src/lib.rs) | Strict Markdown parsing, source diagnostics, math and local image loading |
-| [tm20-cli](crates/tm20-cli/src/main.rs) | `tm20-set` typesetter and `tm20` protocol executables; typed [usage-rs](https://github.com/jdx/usage) parsing/help/specs; complete batch prepared before delivery |
+| [tm20](https://docs.rs/tm20) | ESC/POS encoding, raster bands, barcodes/symbols, USB/serial/TCP/memory transports. CODE128-C encoding and DataMatrix model support remain unverified |
+| [tm20-set](https://docs.rs/tm20-set) | Typed sheets, shared parsed fonts, measured layout, rasterization, lossless banding, PNG previews |
+| [tm20-md](https://docs.rs/tm20-md) | Strict Markdown parsing, source diagnostics, math and local image loading |
+| [tm20-cli](https://crates.io/crates/tm20-cli) | `tm20-set` typesetter and `tm20` protocol executables; typed [usage-rs](https://github.com/jdx/usage) parsing/help/specs; complete batch prepared before delivery |
 
 | Image network policy | Behavior |
 | --- | --- |
@@ -87,7 +107,7 @@ and Zig, add the Rust musl targets, then:
 Outputs are under `target/<target>/release/`. These build checks do not establish
 hardware compatibility; OS packaging and Linux test suites are outside this repository's current scope.
 
-Agent workflow: [SKILL.md](.claude/skills/tm20/SKILL.md).
+Agent workflow: [SKILL.md](https://github.com/bjornpagen/tm20/blob/main/.claude/skills/tm20/SKILL.md).
 
 Device-free parallel tests: `cargo nextest run --workspace --locked`.
 Doctests: `cargo test --workspace --locked --doc`. Each visual fixture is an independent test.

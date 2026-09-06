@@ -38,11 +38,7 @@ fn main() -> ExitCode {
 fn run(request: Request) -> Result<()> {
     match request {
         Request::FontLicenses => {
-            print!(
-                "Source Sans 3 (3.052R)\n{}\nSource Code Pro (2.042R)\n{}",
-                include_str!("../fonts/SourceSans3-LICENSE.txt"),
-                include_str!("../fonts/SourceCodePro-LICENSE.txt")
-            );
+            print!("{}", tm20_set::FONT_LICENSES);
             Ok(())
         }
         Request::ListCatalog => {

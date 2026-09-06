@@ -70,7 +70,7 @@ fn serve_status(listener: TcpListener, status: &'static str) -> std::thread::Joi
             assert_eq!(stream.read(&mut byte).unwrap(), 1);
             request.push(byte[0]);
         }
-        let image = include_bytes!("../../tm20-md/fixtures/grid.png");
+        let image = include_bytes!("../src/pig.png");
         write!(
             stream,
             "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",

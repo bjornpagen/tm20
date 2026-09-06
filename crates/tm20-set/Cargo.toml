@@ -1,9 +1,18 @@
 [package]
 name = "tm20-set"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
-license.workspace = true
-publish.workspace = true
+rust-version.workspace = true
+license = "0BSD AND OFL-1.1"
+repository.workspace = true
+readme.workspace = true
+description = "Strict typed layout, embedded fonts, and rasterization for thermal tape"
+keywords = ["escpos", "thermal", "typesetting", "printer"]
+categories = ["graphics", "text-processing"]
+
+[features]
+default = ["portable-fonts"]
+portable-fonts = []
 
 [dependencies]
 tm20 = { workspace = true }

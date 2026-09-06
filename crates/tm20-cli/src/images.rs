@@ -131,10 +131,10 @@ mod tests {
 
     #[test]
     fn local_images_need_no_network_permission() {
-        let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tm20-md/fixtures");
+        let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         assert_eq!(
-            load(ImagePolicy::default(), &base, "grid.png").unwrap(),
-            include_bytes!("../../tm20-md/fixtures/grid.png")
+            load(ImagePolicy::default(), &base, "pig.png").unwrap(),
+            include_bytes!("pig.png")
         );
     }
 
@@ -172,7 +172,7 @@ mod tests {
 
     #[test]
     fn remote_images_follow_redirects_and_preserve_query() {
-        let bytes = include_bytes!("../../tm20-md/fixtures/grid.png").to_vec();
+        let bytes = include_bytes!("pig.png").to_vec();
         let (url, server) = server(vec![
             ("302 Found\r\nLocation: /image.png?version=2", Vec::new()),
             ("200 OK", bytes.clone()),

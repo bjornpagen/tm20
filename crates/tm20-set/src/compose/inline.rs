@@ -1542,6 +1542,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)] // An upright font has exactly zero slant, not an approximation.
     fn roman_has_no_overhang() {
         let table = table();
         let roman = table.text(Cut::Roman).unwrap();

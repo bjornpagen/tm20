@@ -2094,7 +2094,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tm20"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "nusb",
  "serialport",
@@ -2102,7 +2102,7 @@ dependencies = [
 
 [[package]]
 name = "tm20-cli"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "reqwest",
  "system-configuration",
@@ -2114,7 +2114,7 @@ dependencies = [
 
 [[package]]
 name = "tm20-md"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "ab_glyph",
  "comrak",
@@ -2131,7 +2131,7 @@ dependencies = [
 
 [[package]]
 name = "tm20-set"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "fontdue",
  "harfrust",

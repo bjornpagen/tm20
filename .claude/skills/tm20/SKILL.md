@@ -5,9 +5,11 @@ description: Author, preview, or print Markdown receipts and tapes with this rep
 
 # Author and print a tape
 
-Run from this workspace root. Read [README.md](../../../README.md) for the
-supported features and deviations when needed; do not load the corpus
-or vendor manuals for an ordinary print.
+Use the installed `tm20-set` command (`cargo install tm20-cli --locked`, Rust
+1.91+). When developing this checkout, substitute
+`cargo run --locked --bin tm20-set --` from the workspace root.
+Read [README.md](../../../README.md) for supported features and deviations
+when needed; do not load the corpus or vendor manuals for an ordinary print.
 
 ## Choose the requested effect
 
@@ -24,10 +26,10 @@ not in the repo. Keep supplied files and existing fixtures in place.
 
 ```sh
 # Print one file; --usb-serial S may precede print to select a USB device.
-cargo run --locked --bin tm20-set -- print md /tmp/TAPE_DIR/tape.md
+tm20-set print md /tmp/TAPE_DIR/tape.md
 
 # No printer; writes PREVIEW_DIR/tape.png at 2×.
-cargo run --locked --bin tm20-set -- --dry --png /tmp/PREVIEW_DIR print md /tmp/TAPE_DIR/tape.md
+tm20-set --dry --png /tmp/PREVIEW_DIR print md /tmp/TAPE_DIR/tape.md
 ```
 
 Replace placeholders with actual paths. Options precede `print`. A directory
@@ -93,6 +95,9 @@ automatically; establish what printed or ask before another copy. `hello`,
 `test all`, status, and debug are device operations, not harmless validation.
 
 Portable embedded fonts are the default on macOS, Fedora, and gokrazy.
+Library callers use `tm20_md::sheet` → `tm20_set::lower` → `tm20::encode`,
+with a reused `tm20_set::FaceTable::portable()`. `image_bytes` is local-only,
+not a path sandbox; custom loaders own access/network policy.
 Use `--fonts macos` only when Helvetica/Menlo typography is requested and
 those system fonts exist. Math uses embedded KaTeX glyphs, not host fallback.
 USB targets the TM-T20III (`04b8:0e28`). Keep disposable tapes and generated

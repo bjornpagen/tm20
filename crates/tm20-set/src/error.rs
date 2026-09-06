@@ -78,6 +78,7 @@ impl fmt::Display for SourceLocation {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Error {
     InText {
         text: String,

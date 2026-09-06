@@ -7,6 +7,7 @@ use crate::barcode::BarcodeKind;
 use crate::symbol::Gs1DataBarType;
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Error {
     Encode(EncodeError),
     Usb(UsbError),
@@ -86,6 +87,7 @@ impl From<serialport::Error> for Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EncodeError {
     Size {
         width: u8,
@@ -196,6 +198,7 @@ impl fmt::Display for EncodeError {
 impl std::error::Error for EncodeError {}
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum UsbError {
     NotFound {
         vid: u16,
@@ -232,6 +235,7 @@ impl From<nusb::Error> for UsbError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum StatusError {
     BadPattern { byte: u8 },
 }
@@ -249,6 +253,7 @@ impl fmt::Display for StatusError {
 impl std::error::Error for StatusError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum IdentifyError {
     Unexpected { got: Vec<u8> },
 }
@@ -266,6 +271,7 @@ impl fmt::Display for IdentifyError {
 impl std::error::Error for IdentifyError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum FramingError {
     UnexpectedEof,
     Overlength { max: usize, got: usize },
@@ -289,6 +295,7 @@ impl fmt::Display for FramingError {
 impl std::error::Error for FramingError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RasterError {
     ZeroWidth,
     ZeroHeight,

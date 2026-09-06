@@ -1,6 +1,4 @@
-# Same dated nightly as ../bumbledb (nightly-2026-08-15). The pin
-# moves deliberately. No nightly language features yet: none of them
-# delete code in this stack (no try_blocks, no portable_simd).
+# Stable release toolchain; package rust-version declares the tested minimum.
 [toolchain]
-channel = "nightly-2026-08-15"
-components = ["rustfmt", "clippy", "rust-src"]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]
