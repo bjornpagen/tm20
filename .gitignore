@@ -1,5 +1,3 @@
 /target*
 .DS_Store
 *.swp
-/sources/*.pdf
-/sources/*.zip
