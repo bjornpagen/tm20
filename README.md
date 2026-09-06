@@ -3,7 +3,8 @@
 Markdown → thermal tape for the Epson TM-T20III: 576 dots, 80 mm, 203 dpi.
 A strict printable subset of CommonMark and GFM. Unsupported constructs,
 missing glyphs, and clipped content are errors with source context—not fallbacks.
-Code and tests define behavior.
+Diagnostics include error codes, source lines/character columns, excerpts, and
+repair guidance. Code and tests define behavior.
 
 | Feature | Supported behavior | Specification |
 | --- | --- | --- |
@@ -21,7 +22,7 @@ Code and tests define behavior.
 | Tables | Two/three columns only; header-only tables accepted; ragged rows reject | [GFM](https://github.github.com/gfm/#tables-extension-) (restricted) |
 | Table alignment | Left/right; centered columns reject. Right-aligned cells use tabular digits; clipped content rejects | [GFM](https://github.github.com/gfm/#tables-extension-) (restricted) |
 | Table pipes | Literal pipes must be escaped, including inside code spans | [GFM](https://github.github.com/gfm/#tables-extension-) |
-| Links | Inline/reference links; italic labels, numbered destination endnotes when nonredundant; destinations deduplicate | [CommonMark](https://spec.commonmark.org/0.31.2/#links) |
+| Links | Italic labels; numbered destination endnotes when nonredundant; destinations deduplicate; undefined references and conflicting titles reject | [CommonMark](https://spec.commonmark.org/0.31.2/#links) |
 | Autolinks | Angle links, recognized bare URLs and email; normally no redundant endnote | [CommonMark](https://spec.commonmark.org/0.31.2/#autolinks), [GFM](https://github.github.com/gfm/#autolinks-extension-) |
 | Images | Standalone PNG/JPEG; local files or HTTP(S) via system curl; shrink to local width, dither to monochrome; no printed alt text | [CommonMark](https://spec.commonmark.org/0.31.2/#images) (restricted) |
 | Raw HTML | Rejected, including comments; escaped HTML and code literals remain text | [CommonMark](https://spec.commonmark.org/0.31.2/#raw-html), [HTML blocks](https://spec.commonmark.org/0.31.2/#html-blocks) (unsupported) |
@@ -34,10 +35,11 @@ Code and tests define behavior.
 | Crate | Responsibility |
 | --- | --- |
 | [tm20](crates/tm20/src/lib.rs) | ESC/POS encoding, raster bands, barcodes/symbols, USB/serial/TCP/memory transports. CODE128-C encoding and DataMatrix model support remain unverified |
-| [tm20-set](crates/tm20-set/src/lib.rs) | Typed sheets, font shaping, layout, rasterization, banding, PNG previews |
+| [tm20-set](crates/tm20-set/src/lib.rs) | Typed sheets, shared parsed fonts, measured layout, rasterization, lossless banding, PNG previews |
 | [tm20-md](crates/tm20-md/src/lib.rs) | Strict Markdown parsing, source diagnostics, math and local image loading |
-| [tm20-cli](crates/tm20-cli/src/main.rs) | `tm20-set` executable: prepare, preview, print; macOS Helvetica/Menlo fonts |
+| [tm20-cli](crates/tm20-cli/src/main.rs) | `tm20-set` executable: full batch preparation before USB opens; device-free `--dry` previews; HTTP(S) image loading; macOS Helvetica/Menlo fonts |
 
 Agent workflow: [SKILL.md](.claude/skills/tm20/SKILL.md).
 
-Parallel tests: `cargo nextest run --workspace`. Doctests: `cargo test --workspace --doc`.
+Device-free parallel tests: `cargo nextest run --workspace --locked`.
+Doctests: `cargo test --workspace --locked --doc`. Each visual fixture is an independent test.

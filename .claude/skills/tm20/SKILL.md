@@ -17,6 +17,7 @@ or vendor manuals for an ordinary print.
 - **Preview requested:** use `--dry --png DIR`, then inspect the PNG.
   `--png` alone also prints.
 - **Write/edit only:** create the Markdown; do not print implicitly.
+  `--dry` alone validates and encodes without writing previews or opening USB.
 
 Author new tapes and figures in a unique temporary directory under `/tmp`,
 not in the repo. Keep supplied files and existing fixtures in place.
@@ -41,9 +42,9 @@ for directories. Same-named PNGs are overwritten. Built-ins: `ticket`,
   size. Headings must be nonempty plain text. Use short paragraphs with one
   blank line between blocks; extra blank lines add no space. A trailing
   backslash gives address-style hard breaks.
-- Emphasis, strong, strikethrough, code, lists, tasks, and quotes work.
-  Nest lists/quotes at most three deep. Code blocks never wrap; aim for about 30 columns
-  at body size or they reject. Missing glyphs and clipped content also reject.
+- Emphasis, strong, `~~strikethrough~~`, code, lists, tasks, and quotes work.
+  Nest lists/quotes at most three deep. Code blocks never wrap: split long
+  lines explicitly. Missing glyphs and clipped content reject.
 - Tables have two/three columns. Use `---:` for numbers with fixed decimals;
   `:---:` rejects. Every row must have the same cell count. A rule then
   header-only total table is the receipt idiom. Literal cell pipes need
@@ -56,9 +57,9 @@ for directories. Same-named PNGs are overwritten. Built-ins: `ticket`,
   headings; display math must be outside inline styling, links, and tables.
   Escape literal brackets; bare brackets can be reference syntax.
 - PNG/JPEG images stand alone in a paragraph. Relative paths resolve beside
-  the Markdown; HTTP(S) images are fetched by system curl, including for previews.
-  Images shrink locally but never upscale.
-  Alt text does not print. High-contrast artwork survives dithering best.
+  the Markdown. System curl fetches HTTP(S) images even with `--dry`;
+  validation/previews are device-free, not network-free. Images shrink to
+  local width, never upscale, and print without alt text. Prefer high contrast.
 - No raw HTML/comments, YAML front matter, or CSS. Do not
   paste GitHub badges or HTML layout. `---` immediately under text can
   be a Setext heading; surround intended rules with blank lines.
@@ -66,15 +67,15 @@ for directories. Same-named PNGs are overwritten. Built-ins: `ticket`,
 ## Failure boundaries
 
 The complete batch encodes before USB opens: parsing/rendering errors send
-nothing. Use the filename, source line/column, reason, and correction hint
-to repair the Markdown; do not weaken validation or replace rejected content
-silently. Fix those before retrying. After a write/completion failure,
-delivery may be partial: never resend automatically; establish what printed
-or ask before another copy. Do not use `hello`, `test all`, status, or debug
-as harmless connectivity checks.
+nothing. Read the error code, filename, source line/character column, excerpt,
+and reason. Correct that source construct; `--dry` checks a repair without
+printing. Preserve the intended content; do not weaken validation,
+substitute fonts, or silently drop rejected material.
+
+After a write/completion failure, delivery may be partial: never resend
+automatically; establish what printed or ask before another copy. `hello`,
+`test all`, status, and debug are device operations, not harmless validation.
 
 The CLI needs Helvetica.ttc and Menlo.ttc in macOS `/System/Library/Fonts`;
 real printing needs the TM-T20III (`04b8:0e28`). Missing fonts are a prerequisite
-failure, not permission to substitute faces. Code and tests define behavior;
-default tests are device-free. Keep disposable
-tapes and generated output out of commits.
+failure. Keep disposable tapes and generated output out of commits.
