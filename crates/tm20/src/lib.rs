@@ -1,8 +1,11 @@
 //! ESC/POS dialect for Epson TM-T20 printers, proven on the TM-T20III.
 //!
-//! The public contract is a [`Document`] of [`Command`] values, [`encode`] to
+//! The public contract is a [`Document`] of [`Command`] values, [`encode()`] to
 //! bytes, and a [`Transport`] that writes them. USB (`04b8:0e28`) is the first
 //! sink. There is no printer builder.
+//!
+//! Image pages are [`Raster`] (immutable packed 1-bit). Wire banding and
+//! scale live on [`Graphics`]; `pack` remains a compatibility wrapper.
 
 pub mod barcode;
 pub mod command;
@@ -15,6 +18,8 @@ pub mod host;
 pub mod identify;
 pub mod memory;
 pub mod net;
+pub mod raster;
+pub mod reply;
 pub mod selftest;
 pub mod serial;
 pub mod status;
@@ -28,12 +33,16 @@ pub use command::{
 };
 pub use document::Document;
 pub use encode::encode;
-pub use error::{EncodeError, Error, IdentifyError, Result, StatusError, UsbError};
+pub use error::{
+    EncodeError, Error, FramingError, IdentifyError, RasterError, Result, StatusError, UsbError,
+};
 pub use graphics::{Graphics, GraphicsScale, max_height, pack};
 pub use host::{ean13_page, hello, qr_page, rule, ruler, text_page};
 pub use identify::{InfoRequest, encode_info, encode_process_id, parse_process_id, query_info};
 pub use memory::Memory;
 pub use net::Tcp;
+pub use raster::Raster;
+pub use reply::ReplyReader;
 pub use selftest::{Case as TestCase, catalog, find as find_case};
 pub use serial::Serial;
 pub use status::{Status, StatusRequest, parse_status};

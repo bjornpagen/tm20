@@ -2,15 +2,33 @@
 //! Adjacent [`ColAlign::End`] columns take a two-module gap; a single-module
 //! gutter between two hanging figure columns is not a legal plan.
 
+use crate::compose::plan::WrapCost;
+use crate::error::Error;
 use crate::frame::ColAlign;
-use crate::leading::{GridSkip, GRID};
+use crate::geometry::Advance;
+use crate::leading::{GRID, GridSkip};
 
 /// Unwrapped (`pref`) and longest-word (`min`) widths, with ink alignment.
+/// `1 <= min <= pref` is a constructor law, not a later clamp.
 #[derive(Clone, Copy)]
 pub(crate) struct Natural<const N: usize> {
-    pub align: [ColAlign; N],
-    pub pref: [u16; N],
-    pub min: [u16; N],
+    pub(crate) align: [ColAlign; N],
+    pub(crate) pref: [u64; N],
+    pub(crate) min: [u64; N],
+}
+
+impl<const N: usize> Natural<N> {
+    pub(crate) fn new(align: [ColAlign; N], min: [u64; N], pref: [u64; N]) -> Result<Self, Error> {
+        if N < 2 {
+            return Err(Error::ImpossibleColumns);
+        }
+        for i in 0..N {
+            if min[i] < 1 || pref[i] < min[i] {
+                return Err(Error::ImpossibleColumns);
+            }
+        }
+        Ok(Self { align, pref, min })
+    }
 }
 
 /// A cell box. [`ColAlign`] is ink inside the box, not leftover policy.
@@ -22,16 +40,26 @@ pub(crate) struct Cell {
 }
 
 impl Cell {
-    pub(crate) fn end(self) -> u16 {
-        self.origin.saturating_add(self.width)
+    pub(crate) fn end(self) -> Result<u16, Error> {
+        self.origin
+            .checked_add(self.width)
+            .ok_or(Error::ImpossibleColumns)
     }
 
-    pub(crate) fn ink_x(self, line_width: i32) -> i32 {
+    pub(crate) fn ink_x(self, line_width: Advance) -> Result<Advance, Error> {
+        let origin = Advance::from_dots(i32::from(self.origin)).ok_or(Error::CoordinateOverflow)?;
         match self.align {
-            ColAlign::Start => crate::size::to_frac(self.origin),
+            ColAlign::Start => Ok(origin),
             ColAlign::End => {
-                crate::size::to_frac(self.origin)
-                    + (crate::size::to_frac(self.width) - line_width).max(0)
+                let box_w =
+                    Advance::from_dots(i32::from(self.width)).ok_or(Error::CoordinateOverflow)?;
+                match box_w.checked_sub(line_width) {
+                    Some(slack) if slack.units() > 0 => {
+                        origin.checked_add(slack).ok_or(Error::CoordinateOverflow)
+                    }
+                    Some(_) => Ok(origin),
+                    None => Ok(origin),
+                }
             }
         }
     }
@@ -51,8 +79,8 @@ enum Kind {
 
 #[derive(Clone, Copy)]
 enum Width {
-    Locked { min: u16, pref: u16 },
-    Flex { min: u16, pref: u16 },
+    Locked { min: u64, pref: u64 },
+    Flex { min: u64, pref: u64 },
 }
 
 enum Room {
@@ -62,20 +90,20 @@ enum Room {
 }
 
 impl Width {
-    fn new(align: ColAlign, min: u16, pref: u16) -> Self {
+    fn new(align: ColAlign, min: u64, pref: u64) -> Self {
         match align {
             ColAlign::End => Self::Locked { min, pref },
             ColAlign::Start => Self::Flex { min, pref },
         }
     }
 
-    fn min(self) -> u16 {
+    fn min(self) -> u64 {
         match self {
             Self::Locked { min, .. } | Self::Flex { min, .. } => min,
         }
     }
 
-    fn pref(self) -> u16 {
+    fn pref(self) -> u64 {
         match self {
             Self::Locked { pref, .. } | Self::Flex { pref, .. } => pref,
         }
@@ -93,12 +121,10 @@ fn kind<const N: usize>(align: &[ColAlign; N]) -> Kind {
     }
 }
 
-fn room(pref_sum: u16, min_sum: u16, inner: u16) -> Room {
-    let over = pref_sum.saturating_sub(inner);
-    // A deficit smaller than a gutter is overfull, not a wrap. GRID is the quantum.
-    if pref_sum <= inner || over < GRID {
+fn room(pref_sum: u64, min_sum: u64, inner: u16) -> Room {
+    if pref_sum <= u64::from(inner) {
         Room::Fit
-    } else if min_sum <= inner {
+    } else if min_sum <= u64::from(inner) {
         Room::Squeeze
     } else {
         Room::Overflow
@@ -115,18 +141,38 @@ fn gap_after<const N: usize>(align: &[ColAlign; N], i: usize, base: u16) -> u16 
     }
 }
 
-fn gutters<const N: usize>(align: &[ColAlign; N], base: u16) -> u16 {
-    (0..N.saturating_sub(1))
-        .map(|i| gap_after(align, i, base))
-        .fold(0u16, u16::saturating_add)
+fn gutters<const N: usize>(align: &[ColAlign; N], base: u16) -> Result<u16, Error> {
+    let mut g = 0u16;
+    for i in 0..N.saturating_sub(1) {
+        g = g
+            .checked_add(gap_after(align, i, base))
+            .ok_or(Error::ImpossibleColumns)?;
+    }
+    Ok(g)
 }
 
-fn inner_width<const N: usize>(measure: u16, align: &[ColAlign; N], gutter: u16) -> u16 {
-    measure.saturating_sub(gutters(align, gutter)).max(1)
+fn sum_checked(mut xs: impl Iterator<Item = u16>) -> Result<u16, Error> {
+    xs.try_fold(0u16, |a, x| {
+        a.checked_add(x).ok_or(Error::ImpossibleColumns)
+    })
 }
 
-fn sum(xs: impl Iterator<Item = u16>) -> u16 {
-    xs.fold(0u16, u16::saturating_add)
+fn sum_natural(mut xs: impl Iterator<Item = u64>) -> Result<u64, Error> {
+    xs.try_fold(0u64, |a, x| {
+        a.checked_add(x).ok_or(Error::CoordinateOverflow)
+    })
+}
+
+fn box_width(n: u64) -> Result<u16, Error> {
+    u16::try_from(n).map_err(|_| Error::ImpossibleColumns)
+}
+
+fn box_widths<const N: usize>(natural: [u64; N]) -> Result<[u16; N], Error> {
+    let mut widths = [0; N];
+    for (to, from) in widths.iter_mut().zip(natural) {
+        *to = box_width(from)?;
+    }
+    Ok(widths)
 }
 
 fn last_flex<const N: usize>(spec: &[Width; N]) -> Option<usize> {
@@ -143,21 +189,32 @@ fn next_flex<const N: usize>(spec: &[Width; N], mut k: usize) -> Option<usize> {
     None
 }
 
-fn flex_min_from<const N: usize>(spec: &[Width; N], k: usize) -> u16 {
-    sum(spec
-        .iter()
-        .skip(k)
-        .map(|w| if w.is_flex() { w.min() } else { 0 }))
+fn flex_min_from<const N: usize>(spec: &[Width; N], k: usize) -> Result<u16, Error> {
+    box_width(sum_natural(
+        spec.iter()
+            .skip(k)
+            .map(|w| if w.is_flex() { w.min() } else { 0 }),
+    )?)
 }
 
-fn absorb<const N: usize>(spec: &[Width; N], widths: &mut [u16; N], inner: u16) {
-    let leftover = inner.saturating_sub(sum(widths.iter().copied()));
+fn absorb<const N: usize>(
+    spec: &[Width; N],
+    widths: &mut [u16; N],
+    inner: u16,
+) -> Result<(), Error> {
+    let used = sum_checked(widths.iter().copied())?;
+    let Some(leftover) = inner.checked_sub(used) else {
+        return Err(Error::ImpossibleColumns);
+    };
     if leftover == 0 {
-        return;
+        return Ok(());
     }
     if let Some(i) = last_flex(spec) {
-        widths[i] = widths[i].saturating_add(leftover);
+        widths[i] = widths[i]
+            .checked_add(leftover)
+            .ok_or(Error::ImpossibleColumns)?;
     }
+    Ok(())
 }
 
 fn pack<const N: usize>(
@@ -165,35 +222,75 @@ fn pack<const N: usize>(
     widths: [u16; N],
     align: [ColAlign; N],
     gutter: u16,
-) -> Placed<N> {
+    limit: u16,
+) -> Result<Placed<N>, Error> {
     let mut origin = origin0;
-    Placed {
-        col: std::array::from_fn(|i| {
-            let cell = Cell {
-                origin,
-                width: widths[i],
-                align: align[i],
-            };
-            origin = origin.saturating_add(widths[i]);
-            origin = origin.saturating_add(gap_after(&align, i, gutter));
-            cell
-        }),
+    let mut col = [Cell {
+        origin: origin0,
+        width: 1,
+        align: align[0],
+    }; N];
+    for i in 0..N {
+        if widths[i] < 1 {
+            return Err(Error::ImpossibleColumns);
+        }
+        let end = origin
+            .checked_add(widths[i])
+            .ok_or(Error::ImpossibleColumns)?;
+        if end > limit {
+            return Err(Error::ImpossibleColumns);
+        }
+        col[i] = Cell {
+            origin,
+            width: widths[i],
+            align: align[i],
+        };
+        if i + 1 < N {
+            origin = end
+                .checked_add(gap_after(&align, i, gutter))
+                .ok_or(Error::ImpossibleColumns)?;
+        }
     }
+    for w in col.windows(2) {
+        if w[0].end()? > w[1].origin {
+            return Err(Error::ImpossibleColumns);
+        }
+    }
+    Ok(Placed { col })
 }
 
 impl<const N: usize> Placed<N> {
-    fn compact(widths: [u16; N], align: [ColAlign; N], x0: u16, gutter: u16) -> Self {
-        pack(x0, widths, align, gutter)
+    fn compact(
+        widths: [u16; N],
+        align: [ColAlign; N],
+        x0: u16,
+        gutter: u16,
+        limit: u16,
+    ) -> Result<Self, Error> {
+        pack(x0, widths, align, gutter, limit)
     }
 
-    fn hang(widths: [u16; N], align: [ColAlign; N], x0: u16, measure: u16, gutter: u16) -> Self {
-        let used = sum(widths.iter().copied()).saturating_add(gutters(&align, gutter));
-        let slack = measure.saturating_sub(used);
-        let placed = pack(x0.saturating_add(slack), widths, align, gutter);
-        if used <= measure {
-            debug_assert_eq!(placed.col[N - 1].end(), x0.saturating_add(measure));
+    fn hang(
+        widths: [u16; N],
+        align: [ColAlign; N],
+        x0: u16,
+        measure: u16,
+        gutter: u16,
+        limit: u16,
+    ) -> Result<Self, Error> {
+        let used = sum_checked(widths.iter().copied())?
+            .checked_add(gutters(&align, gutter)?)
+            .ok_or(Error::ImpossibleColumns)?;
+        if used > measure {
+            return Err(Error::ImpossibleColumns);
         }
-        placed
+        let slack = measure - used;
+        let origin = x0.checked_add(slack).ok_or(Error::ImpossibleColumns)?;
+        let placed = pack(origin, widths, align, gutter, limit)?;
+        if placed.col[N - 1].end()? != limit {
+            return Err(Error::ImpossibleColumns);
+        }
+        Ok(placed)
     }
 }
 
@@ -204,10 +301,11 @@ fn place<const N: usize>(
     x0: u16,
     measure: u16,
     gutter: u16,
-) -> Placed<N> {
+) -> Result<Placed<N>, Error> {
+    let limit = x0.checked_add(measure).ok_or(Error::ImpossibleColumns)?;
     match table {
-        Kind::Compact => Placed::compact(widths, align, x0, gutter),
-        Kind::Hang => Placed::hang(widths, align, x0, measure, gutter),
+        Kind::Compact => Placed::compact(widths, align, x0, gutter, limit),
+        Kind::Hang => Placed::hang(widths, align, x0, measure, gutter, limit),
     }
 }
 
@@ -217,61 +315,97 @@ pub(crate) fn layout<const N: usize>(
     x0: u16,
     measure: u16,
     gutter: u16,
-    cost: impl FnMut(&[u16; N]) -> f64,
-) -> Placed<N> {
-    debug_assert!(N >= 2);
-    let inner = inner_width(measure, &natural.align, gutter);
-    let pref = natural.pref.map(|w| w.min(inner).max(1));
-    let min: [u16; N] = std::array::from_fn(|i| natural.min[i].min(pref[i]).max(1));
-    let spec: [Width; N] = std::array::from_fn(|i| Width::new(natural.align[i], min[i], pref[i]));
+    cost: impl FnMut(&[u16; N]) -> Result<WrapCost, Error>,
+) -> Result<Placed<N>, Error> {
+    if N < 2 {
+        return Err(Error::ImpossibleColumns);
+    }
+    let gaps = gutters(&natural.align, gutter)?;
+    let min_boxes = u16::try_from(N).map_err(|_| Error::ImpossibleColumns)?;
+    let need = gaps
+        .checked_add(min_boxes)
+        .ok_or(Error::ImpossibleColumns)?;
+    if need > measure {
+        return Err(Error::ImpossibleColumns);
+    }
+    let inner = measure.checked_sub(gaps).ok_or(Error::ImpossibleColumns)?;
+    if inner < min_boxes {
+        return Err(Error::ImpossibleColumns);
+    }
+    let spec: [Width; N] =
+        std::array::from_fn(|i| Width::new(natural.align[i], natural.min[i], natural.pref[i]));
     let table = kind(&natural.align);
-    let pref_sum = sum(pref.iter().copied());
-    let min_sum = sum(min.iter().copied());
+    let pref_sum = sum_natural(natural.pref.iter().copied())?;
+    let min_sum = sum_natural(natural.min.iter().copied())?;
     let widths = match room(pref_sum, min_sum, inner) {
-        Room::Fit => fit(table, &spec, inner),
-        Room::Squeeze => squeeze(table, &spec, inner, cost),
-        Room::Overflow => overflow(&spec, inner),
+        Room::Fit => fit(table, &spec, inner)?,
+        Room::Squeeze => squeeze(table, &spec, inner, cost)?,
+        Room::Overflow => overflow(&spec, inner)?,
     };
+    let used = sum_checked(widths.iter().copied())?;
+    if used > inner || widths.iter().any(|&w| w < 1) {
+        return Err(Error::ImpossibleColumns);
+    }
     place(table, widths, natural.align, x0, measure, gutter)
 }
 
-fn fit<const N: usize>(table: Kind, spec: &[Width; N], inner: u16) -> [u16; N] {
-    let mut widths = spec.map(Width::pref);
+fn fit<const N: usize>(table: Kind, spec: &[Width; N], inner: u16) -> Result<[u16; N], Error> {
+    let mut widths = box_widths(spec.map(Width::pref))?;
     if table == Kind::Hang {
-        absorb(spec, &mut widths, inner);
+        absorb(spec, &mut widths, inner)?;
     }
-    widths
+    Ok(widths)
 }
 
-fn overflow<const N: usize>(spec: &[Width; N], inner: u16) -> [u16; N] {
-    let mut widths = spec.map(Width::min);
-    let locked_min = sum(spec.iter().map(|w| if w.is_flex() { 0 } else { w.min() }));
-    if spec.iter().any(|w| w.is_flex()) && locked_min < inner {
-        scale_where(&mut widths, spec, true, inner - locked_min);
-        return widths;
+fn overflow<const N: usize>(spec: &[Width; N], inner: u16) -> Result<[u16; N], Error> {
+    let mut widths = [1; N];
+    let locked_min = sum_natural(spec.iter().map(|w| if w.is_flex() { 0 } else { w.min() }))?;
+    let flex_count = u64::try_from(spec.iter().filter(|w| w.is_flex()).count())
+        .map_err(|_| Error::ImpossibleColumns)?;
+    if flex_count > 0 && locked_min <= u64::from(inner) - flex_count {
+        for (i, w) in spec.iter().enumerate() {
+            if !w.is_flex() {
+                widths[i] = box_width(w.min())?;
+            }
+        }
+        let budget = inner - box_width(locked_min)?;
+        scale_where(&mut widths, spec, true, budget)?;
+        return Ok(widths);
     }
     let mut flex_n = 0u16;
     for (i, w) in spec.iter().enumerate() {
         if w.is_flex() {
             widths[i] = 1;
-            flex_n = flex_n.saturating_add(1);
+            flex_n = flex_n.checked_add(1).ok_or(Error::ImpossibleColumns)?;
         }
     }
-    let left = inner.saturating_sub(flex_n).max(1);
-    scale_where(&mut widths, spec, false, left);
-    widths
+    let left = inner.checked_sub(flex_n).ok_or(Error::ImpossibleColumns)?;
+    if left < 1 && spec.iter().any(|w| !w.is_flex()) {
+        return Err(Error::ImpossibleColumns);
+    }
+    scale_where(&mut widths, spec, false, left.max(1))?;
+    Ok(widths)
 }
 
-fn scale_where<const N: usize>(widths: &mut [u16; N], spec: &[Width; N], flex: bool, budget: u16) {
+fn scale_where<const N: usize>(
+    widths: &mut [u16; N],
+    spec: &[Width; N],
+    flex: bool,
+    budget: u16,
+) -> Result<(), Error> {
     let count = spec.iter().filter(|w| w.is_flex() == flex).count();
     if count == 0 {
-        return;
+        return Ok(());
     }
-    let group: u32 = (0..N)
-        .filter(|&i| spec[i].is_flex() == flex)
-        .map(|i| u32::from(widths[i]))
-        .sum::<u32>()
-        .max(1);
+    let group = sum_natural(
+        (0..N)
+            .filter(|&i| spec[i].is_flex() == flex)
+            .map(|i| spec[i].min()),
+    )?;
+    let count_dots = u16::try_from(count).map_err(|_| Error::ImpossibleColumns)?;
+    if budget < count_dots {
+        return Err(Error::ImpossibleColumns);
+    }
     let mut used = 0u16;
     let mut seen = 0usize;
     for i in 0..N {
@@ -280,66 +414,87 @@ fn scale_where<const N: usize>(widths: &mut [u16; N], spec: &[Width; N], flex: b
         }
         seen += 1;
         if seen == count {
-            widths[i] = budget.saturating_sub(used).max(1);
+            widths[i] = budget.checked_sub(used).ok_or(Error::ImpossibleColumns)?;
+            if widths[i] < 1 {
+                return Err(Error::ImpossibleColumns);
+            }
         } else {
-            widths[i] = ((u32::from(widths[i]) * u32::from(budget)) / group) as u16;
-            widths[i] = widths[i].max(1);
-            used = used.saturating_add(widths[i]);
+            let raw = (u128::from(spec[i].min()) * u128::from(budget)) / u128::from(group);
+            // Leave one dot for every remaining box, even with skewed weights.
+            let reserve = u16::try_from(count - seen).map_err(|_| Error::ImpossibleColumns)?;
+            widths[i] = u16::try_from(raw)
+                .map_err(|_| Error::ImpossibleColumns)?
+                .max(1)
+                .min(budget - used - reserve);
+            used = used
+                .checked_add(widths[i])
+                .ok_or(Error::ImpossibleColumns)?;
         }
     }
+    Ok(())
 }
 
 fn squeeze<const N: usize>(
     table: Kind,
     spec: &[Width; N],
     inner: u16,
-    cost: impl FnMut(&[u16; N]) -> f64,
-) -> [u16; N] {
+    cost: impl FnMut(&[u16; N]) -> Result<WrapCost, Error>,
+) -> Result<[u16; N], Error> {
     if next_flex(spec, 0).is_none() {
         return overflow(spec, inner);
     }
-    let (mut widths, budget) = squeeze_budget(spec, inner);
+    let (mut widths, budget) = squeeze_budget(spec, inner)?;
     let mut cx = Squeeze {
         spec,
         table,
         widths,
         best: widths,
-        best_cost: f64::INFINITY,
+        best_cost: None,
         cost,
     };
-    cx.search(0, budget);
-    if cx.best_cost.is_finite() {
-        return cx.best;
+    cx.search(0, budget)?;
+    if cx.best_cost.is_some() {
+        return Ok(cx.best);
     }
     for (i, w) in spec.iter().enumerate() {
         if let Width::Flex { min, .. } = *w {
-            widths[i] = min;
+            widths[i] = box_width(min)?;
         }
     }
     if table == Kind::Hang {
-        absorb(spec, &mut widths, inner);
+        absorb(spec, &mut widths, inner)?;
     }
-    widths
+    Ok(widths)
 }
 
-fn squeeze_budget<const N: usize>(spec: &[Width; N], inner: u16) -> ([u16; N], u16) {
-    let mut widths = spec.map(Width::pref);
-    let flex_min = sum(spec.iter().map(|w| if w.is_flex() { w.min() } else { 0 }));
-    let mut locked = sum(spec.iter().map(|w| if w.is_flex() { 0 } else { w.pref() }));
-    if flex_min.saturating_add(locked) > inner {
-        let have = inner.saturating_sub(locked);
-        let mut deficit = flex_min.saturating_sub(have);
+fn squeeze_budget<const N: usize>(spec: &[Width; N], inner: u16) -> Result<([u16; N], u16), Error> {
+    let mut natural = spec.map(Width::min);
+    let flex_min = sum_natural(spec.iter().map(|w| if w.is_flex() { w.min() } else { 0 }))?;
+    let mut locked = sum_natural(spec.iter().map(|w| if w.is_flex() { 0 } else { w.pref() }))?;
+    for (i, w) in spec.iter().enumerate() {
+        if !w.is_flex() {
+            natural[i] = w.pref();
+        }
+    }
+    let locked_budget = u64::from(inner)
+        .checked_sub(flex_min)
+        .ok_or(Error::ImpossibleColumns)?;
+    if locked > locked_budget {
+        let mut deficit = locked - locked_budget;
         for (i, w) in spec.iter().enumerate() {
             if w.is_flex() || deficit == 0 {
                 continue;
             }
             let take = w.pref().saturating_sub(w.min()).min(deficit);
-            widths[i] = w.pref() - take;
+            natural[i] = w.pref() - take;
             locked -= take;
             deficit -= take;
         }
     }
-    (widths, inner.saturating_sub(locked))
+    let budget = inner
+        .checked_sub(box_width(locked)?)
+        .ok_or(Error::ImpossibleColumns)?;
+    Ok((box_widths(natural)?, budget))
 }
 
 struct Squeeze<'a, const N: usize, C> {
@@ -347,75 +502,92 @@ struct Squeeze<'a, const N: usize, C> {
     table: Kind,
     widths: [u16; N],
     best: [u16; N],
-    best_cost: f64,
+    best_cost: Option<WrapCost>,
     cost: C,
 }
 
 impl<const N: usize, C> Squeeze<'_, N, C>
 where
-    C: FnMut(&[u16; N]) -> f64,
+    C: FnMut(&[u16; N]) -> Result<WrapCost, Error>,
 {
-    fn search(&mut self, k: usize, remaining: u16) {
+    fn search(&mut self, k: usize, remaining: u16) -> Result<(), Error> {
         let Some(i) = next_flex(self.spec, k) else {
-            return;
+            return Ok(());
         };
         let Width::Flex { min, pref } = self.spec[i] else {
-            return;
+            return Ok(());
         };
+        if min > u64::from(remaining) {
+            return Ok(());
+        }
+        let min = box_width(min)?;
+        let pref = box_width(pref.min(u64::from(remaining)))?;
         if next_flex(self.spec, i + 1).is_none() {
             let w = match self.table {
                 Kind::Compact => remaining.min(pref),
                 Kind::Hang => remaining,
             };
             if w < min {
-                return;
+                return Ok(());
             }
             self.widths[i] = w;
-            let cost = (self.cost)(&self.widths);
-            if cost < self.best_cost {
-                self.best_cost = cost;
+            let cost = (self.cost)(&self.widths)?;
+            let better = match self.best_cost {
+                None => true,
+                Some(best) => cost < best,
+            };
+            if better {
+                self.best_cost = Some(cost);
                 self.best = self.widths;
             }
-            return;
+            return Ok(());
         }
-        let later_min = flex_min_from(self.spec, i + 1);
+        let later_min = flex_min_from(self.spec, i + 1)?;
         each_grid_tick(min, pref, |w| {
             if w.saturating_add(later_min) <= remaining {
                 self.widths[i] = w;
-                self.search(i + 1, remaining - w);
+                self.search(i + 1, remaining - w)?;
             }
-        });
+            Ok(())
+        })
     }
 }
 
-fn each_grid_tick(lo: u16, hi: u16, mut visit: impl FnMut(u16)) {
-    visit(lo);
+fn each_grid_tick(
+    lo: u16,
+    hi: u16,
+    mut visit: impl FnMut(u16) -> Result<(), Error>,
+) -> Result<(), Error> {
+    visit(lo)?;
     if lo >= hi {
-        return;
+        return Ok(());
     }
     let mut x = (lo / GRID + 1) * GRID;
     if x <= lo {
-        x = x.saturating_add(GRID);
+        x = x.checked_add(GRID).ok_or(Error::ImpossibleColumns)?;
     }
     while x < hi {
-        visit(x);
-        let next = x.saturating_add(GRID);
+        visit(x)?;
+        let Some(next) = x.checked_add(GRID) else {
+            break;
+        };
         if next <= x {
             break;
         }
         x = next;
     }
-    visit(hi);
+    visit(hi)
 }
 
 #[cfg(test)]
-fn idle_cost<const N: usize>(_: &[u16; N]) -> f64 {
-    0.0
+fn idle_cost<const N: usize>(_: &[u16; N]) -> Result<WrapCost, Error> {
+    Ok(WrapCost::default())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geometry::Advance;
 
     fn place_fit<const N: usize>(
         align: [ColAlign; N],
@@ -425,16 +597,89 @@ mod tests {
         gutter: u16,
     ) -> Placed<N> {
         layout(
-            Natural {
-                align,
-                pref,
-                min: pref,
-            },
+            Natural::new(align, pref.map(u64::from), pref.map(u64::from)).unwrap(),
             x0,
             measure,
             gutter,
             idle_cost,
         )
+        .expect("feasible columns")
+    }
+
+    #[test]
+    fn intrinsic_width_sum_does_not_limit_feasible_boxes() {
+        let natural = Natural::new(
+            [ColAlign::Start, ColAlign::Start],
+            [10, 10],
+            [40_000, 40_000],
+        )
+        .unwrap();
+        let placed = layout(natural, 0, 576, GRID, idle_cost).expect("short words fit");
+        assert!(
+            placed
+                .col
+                .iter()
+                .all(|c| c.width >= 10 && c.end().unwrap() <= 576)
+        );
+    }
+
+    #[test]
+    fn wide_preferences_and_minima_allocate_only_page_local_boxes() {
+        for align in [
+            [ColAlign::Start, ColAlign::End],
+            [ColAlign::End, ColAlign::End],
+            [ColAlign::Start, ColAlign::Start],
+        ] {
+            for (min, pref) in [
+                ([10, 10], [100_000, 100_000]),
+                ([100_000, 1], [100_000, 1]),
+                ([1, 100_000], [1, 100_000]),
+            ] {
+                let p = layout(
+                    Natural::new(align, min, pref).unwrap(),
+                    0,
+                    576,
+                    GRID,
+                    idle_cost,
+                )
+                .unwrap();
+                assert!(p.col.iter().all(|c| c.width > 0 && c.end().unwrap() <= 576));
+                assert!(p.col[0].end().unwrap() + GRID <= p.col[1].origin);
+            }
+        }
+    }
+
+    #[test]
+    fn skewed_overflow_reserves_a_dot_per_column() {
+        for measure in 19..40 {
+            for min in [[100_000, 1, 1], [1, 100_000, 1], [1, 1, 100_000]] {
+                let p = layout(
+                    Natural::new([ColAlign::Start; 3], min, min).unwrap(),
+                    0,
+                    measure,
+                    GRID,
+                    idle_cost,
+                )
+                .unwrap();
+                assert!(
+                    p.col
+                        .iter()
+                        .all(|c| c.width >= 1 && c.end().unwrap() <= measure)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn natural_rejects_min_above_pref() {
+        assert!(matches!(
+            Natural::new([ColAlign::Start, ColAlign::Start], [10, 4], [8, 4]),
+            Err(Error::ImpossibleColumns)
+        ));
+        assert!(matches!(
+            Natural::new([ColAlign::Start, ColAlign::End], [0, 1], [1, 1]),
+            Err(Error::ImpossibleColumns)
+        ));
     }
 
     #[test]
@@ -444,9 +689,9 @@ mod tests {
         assert_eq!(p.col[1].width, 20);
         assert_eq!(p.col[0].origin, 0);
         assert_eq!(p.col[1].origin, 10 + GRID);
-        assert_eq!(p.col[1].end(), 10 + GRID + 20);
-        assert!(p.col[1].end() < 100);
-        assert_eq!(p.col[1].origin - p.col[0].end(), GRID);
+        assert_eq!(p.col[1].end().unwrap(), 10 + GRID + 20);
+        assert!(p.col[1].end().unwrap() < 100);
+        assert_eq!(p.col[1].origin - p.col[0].end().unwrap(), GRID);
     }
 
     #[test]
@@ -455,12 +700,15 @@ mod tests {
         assert_eq!(p.col[1].width, 20);
         assert_eq!(p.col[0].width, 100 - GRID - 20);
         assert_eq!(p.col[0].origin, 0);
-        assert_eq!(p.col[1].end(), 100);
-        assert_eq!(p.col[1].origin - p.col[0].end(), GRID);
-        assert_eq!(p.col[0].ink_x(crate::size::to_frac(10)), 0);
+        assert_eq!(p.col[1].end().unwrap(), 100);
+        assert_eq!(p.col[1].origin - p.col[0].end().unwrap(), GRID);
         assert_eq!(
-            p.col[1].ink_x(crate::size::to_frac(20)),
-            crate::size::to_frac(p.col[1].origin)
+            p.col[0].ink_x(Advance::from_dots(10).unwrap()).unwrap(),
+            Advance::ZERO
+        );
+        assert_eq!(
+            p.col[1].ink_x(Advance::from_dots(20).unwrap()).unwrap(),
+            Advance::from_dots(i32::from(p.col[1].origin)).unwrap()
         );
     }
 
@@ -469,9 +717,12 @@ mod tests {
         let p = place_fit([ColAlign::End, ColAlign::End], [10, 20], 0, 100, GRID);
         assert_eq!(p.col[0].width, 10);
         assert_eq!(p.col[1].width, 20);
-        assert_eq!(p.col[1].end(), 100);
+        assert_eq!(p.col[1].end().unwrap(), 100);
         assert_eq!(p.col[0].origin, 100 - 20 - GridSkip::TWO.dots() - 10);
-        assert_eq!(p.col[1].origin - p.col[0].end(), GridSkip::TWO.dots());
+        assert_eq!(
+            p.col[1].origin - p.col[0].end().unwrap(),
+            GridSkip::TWO.dots()
+        );
     }
 
     #[test]
@@ -483,10 +734,13 @@ mod tests {
             200,
             GRID,
         );
-        assert_eq!(p.col[1].origin - p.col[0].end(), GRID);
-        assert_eq!(p.col[2].origin - p.col[1].end(), GridSkip::TWO.dots());
-        assert_eq!(p.col[2].end(), 200);
-        assert!(p.col.windows(2).all(|w| w[0].end() <= w[1].origin));
+        assert_eq!(p.col[1].origin - p.col[0].end().unwrap(), GRID);
+        assert_eq!(
+            p.col[2].origin - p.col[1].end().unwrap(),
+            GridSkip::TWO.dots()
+        );
+        assert_eq!(p.col[2].end().unwrap(), 200);
+        assert!(p.col.windows(2).all(|w| w[0].end().unwrap() <= w[1].origin));
     }
 
     #[test]
@@ -499,28 +753,36 @@ mod tests {
             GRID,
         );
         assert_eq!(p.col[0].origin, 4);
-        assert_eq!(p.col[2].end(), 4 + 8 + GRID + 16 + GRID + 24);
-        assert!(p.col[2].end() < 4 + 200);
-        assert_eq!(p.col[1].origin - p.col[0].end(), GRID);
-        assert_eq!(p.col[2].origin - p.col[1].end(), GRID);
+        assert_eq!(p.col[2].end().unwrap(), 4 + 8 + GRID + 16 + GRID + 24);
+        assert!(p.col[2].end().unwrap() < 4 + 200);
+        assert_eq!(p.col[1].origin - p.col[0].end().unwrap(), GRID);
+        assert_eq!(p.col[2].origin - p.col[1].end().unwrap(), GRID);
     }
 
     #[test]
     fn start_ink_stays_at_origin() {
         let p = place_fit([ColAlign::Start, ColAlign::Start], [40, 10], 0, 100, GRID);
+        let origin = Advance::from_dots(i32::from(p.col[1].origin)).unwrap();
         assert_eq!(
-            p.col[1].ink_x(crate::size::to_frac(6)),
-            crate::size::to_frac(p.col[1].origin)
+            p.col[1].ink_x(Advance::from_dots(6).unwrap()).unwrap(),
+            origin
         );
+        let shifted = origin
+            .checked_add(
+                Advance::from_dots(i32::from(p.col[1].width))
+                    .unwrap()
+                    .checked_sub(Advance::from_dots(6).unwrap())
+                    .unwrap(),
+            )
+            .unwrap();
         assert_ne!(
-            p.col[1].ink_x(crate::size::to_frac(6)),
-            crate::size::to_frac(p.col[1].origin)
-                + (crate::size::to_frac(p.col[1].width) - crate::size::to_frac(6))
+            p.col[1].ink_x(Advance::from_dots(6).unwrap()).unwrap(),
+            shifted
         );
     }
 
     #[test]
-    fn compact_overfull_less_than_a_grid_keeps_pref() {
+    fn compact_slight_overfull_stays_inside_the_measure() {
         let p = place_fit(
             [ColAlign::Start, ColAlign::Start, ColAlign::Start],
             [90, 185, 287],
@@ -528,8 +790,47 @@ mod tests {
             576,
             GRID,
         );
-        assert_eq!(p.col.map(|c| c.width), [90, 185, 287]);
-        assert_eq!(p.col[2].origin, 90 + GRID + 185 + GRID);
-        assert_eq!(p.col[2].end(), 576 + 2);
+        let end = p.col[2].end().unwrap();
+        assert!(end <= 576, "last box ends at {end}");
+        assert!(p.col.windows(2).all(|w| w[0].end().unwrap() <= w[1].origin));
+        assert!(p.col.iter().all(|c| c.origin < 576 && c.width >= 1));
+    }
+
+    #[test]
+    fn impossible_gutters_reject() {
+        assert!(matches!(
+            layout(
+                Natural::new([ColAlign::Start, ColAlign::Start], [1, 1], [1, 1]).unwrap(),
+                0,
+                9,
+                GRID,
+                idle_cost,
+            ),
+            Err(Error::ImpossibleColumns)
+        ));
+        assert!(matches!(
+            layout(
+                Natural::new([ColAlign::End, ColAlign::End], [1, 1], [1, 1]).unwrap(),
+                0,
+                17,
+                GRID,
+                idle_cost,
+            ),
+            Err(Error::ImpossibleColumns)
+        ));
+    }
+
+    #[test]
+    fn wrap_cost_is_lexicographic() {
+        let a = WrapCost {
+            extra_lines: 0,
+            raggedness: 100,
+        };
+        let b = WrapCost {
+            extra_lines: 1,
+            raggedness: 0,
+        };
+        assert!(a < b);
+        assert_eq!(a.checked_add(b).unwrap().extra_lines, 1);
     }
 }

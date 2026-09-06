@@ -4,6 +4,7 @@ mod common;
 
 use std::path::{Path, PathBuf};
 
+use tm20::Raster;
 use tm20::command::Command;
 use tm20::encode::encode;
 use tm20::graphics::max_height;
@@ -17,53 +18,64 @@ fn fixtures_dir() -> PathBuf {
 }
 
 fn markdown_files() -> Vec<PathBuf> {
-    let mut files: Vec<_> = std::fs::read_dir(fixtures_dir())
-        .unwrap()
-        .filter_map(|e| {
-            let p = e.ok()?.path();
-            if p.extension().is_some_and(|e| e == "md") {
-                Some(p)
-            } else {
-                None
-            }
+    let dir = fixtures_dir();
+    assert!(dir.is_dir(), "fixtures/ must exist");
+    let mut files: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
+        .map(|e| {
+            e.unwrap_or_else(|err| panic!("{}: {err}", dir.display()))
+                .path()
         })
+        .filter(|p| p.extension().is_some_and(|e| e == "md"))
         .collect();
     files.sort();
-    assert!(!files.is_empty(), "fixtures/*.md");
+    assert!(!files.is_empty(), "fixtures/*.md must be nonempty");
     files
 }
 
 fn load_sheet(path: &Path) -> tm20_set::Sheet<'static> {
-    let src = std::fs::read_to_string(path).unwrap();
+    let src = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let base = path.parent().unwrap();
     sheet(&src, Measure::TAPE, |dest| image_bytes(base, dest))
         .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
-#[test]
-fn fixtures_encode() {
+fn fixture_case(stem: &str) {
     let faces = table();
-    for path in markdown_files() {
-        let sheet = load_sheet(&path);
-        let doc =
-            tm20_set::lower(&sheet, &faces).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        let bytes = encode(&doc).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        assert!(!bytes.is_empty(), "{}", path.display());
-    }
+    let path = fixtures_dir().join(format!("{stem}.md"));
+    let sheet = load_sheet(&path);
+    let doc = tm20_set::lower(&sheet, &faces).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let bytes = encode(&doc).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    assert!(!bytes.is_empty(), "{}", path.display());
+}
+
+include!(concat!(env!("OUT_DIR"), "/paper_cases.rs"));
+
+#[test]
+fn fixture_inventory_is_complete() {
+    let stems: Vec<_> = markdown_files()
+        .iter()
+        .map(|p| common::compare::stem_of(p))
+        .collect();
+    assert_eq!(
+        stems,
+        fixtures::STEMS,
+        "rebuild to discover changed paper fixtures"
+    );
 }
 
 #[test]
-fn fga_lesson_splits_into_min_payloads() {
+fn fga_lesson_splits_into_min_payloads_with_exact_bytes() {
     let faces = table();
     let path = fixtures_dir().join("14-fga.md");
     let sheet = load_sheet(&path);
-    let full = compose(&sheet, &faces).unwrap();
-    let cap = max_height(full.width_dots);
-    let n = u32::from(full.height_dots).div_ceil(u32::from(cap)) as usize;
+    let page = compose(&sheet, &faces).unwrap();
+    let cap = max_height(page.width());
+    let n = page.height().div_ceil(u32::from(cap)) as usize;
     assert!(
         n > 1,
         "lesson should exceed one payload (H={} cap={cap})",
-        full.height_dots
+        page.height()
     );
     let doc = lower(&sheet, &faces).unwrap();
     let bands: Vec<_> = doc
@@ -75,8 +87,12 @@ fn fga_lesson_splits_into_min_payloads() {
         })
         .collect();
     assert_eq!(bands.len(), n);
-    assert!(bands.iter().all(|g| g.height_dots <= cap));
-    let sum: u32 = bands.iter().map(|g| u32::from(g.height_dots)).sum();
-    assert_eq!(sum, u32::from(full.height_dots));
+    assert!(bands.iter().all(|g| g.raster().height() <= u32::from(cap)));
+    let rasters: Vec<Raster> = bands.iter().map(|g| g.raster().clone()).collect();
+    let mut concat = Vec::new();
+    for r in &rasters {
+        concat.extend_from_slice(r.pixels());
+    }
+    assert_eq!(concat.as_slice(), page.pixels());
     encode(&doc).unwrap();
 }

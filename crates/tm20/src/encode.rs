@@ -227,14 +227,15 @@ mod tests {
     fn every_command_variant_encodes() {
         use crate::barcode::{Barcode, BarcodeKind, BarcodeOptions, Code128Set};
         use crate::command::PrintSpeed;
-        use crate::graphics::{Graphics, GraphicsScale, pack};
+        use crate::graphics::{Graphics, GraphicsScale};
+        use crate::raster::Raster;
         use crate::status::StatusRequest;
         use crate::symbol::{
             DataMatrix, DataMatrixType, Gs1DataBar, Gs1DataBarType, Gs1DataBarWidth, MaxiCode,
             MaxiCodeMode, Pdf417, Qr,
         };
 
-        let pixels = pack(8, 8, &[true; 64]).unwrap();
+        let raster = Raster::from_bits(8, 8, &[true; 64]).unwrap();
         let cmds = vec![
             Command::Init,
             Command::Cancel,
@@ -284,8 +285,8 @@ mod tests {
                 ..Pdf417::default()
             }),
             Command::Gs1DataBar(Gs1DataBar {
-                data: "12401234567890".into(),
-                width: Gs1DataBarWidth::M,
+                data: "1240123456789".into(),
+                width: Gs1DataBarWidth::S,
                 kind: Gs1DataBarType::Stacked,
             }),
             Command::MaxiCode(MaxiCode {
@@ -297,12 +298,7 @@ mod tests {
                 kind: DataMatrixType::Square(0),
                 size: 3,
             }),
-            Command::Graphics(Graphics {
-                width_dots: 8,
-                height_dots: 8,
-                pixels,
-                scale: GraphicsScale::Normal,
-            }),
+            Command::Graphics(Graphics::new(raster, GraphicsScale::Normal).unwrap()),
             Command::StatusRequest(StatusRequest::Printer),
         ];
         encode(&Document::new(cmds)).unwrap();

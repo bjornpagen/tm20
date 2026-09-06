@@ -10,6 +10,7 @@ use tm20_set::{
 
 fn cover(frame: &Frame<'_>) {
     match frame {
+        Frame::Source { frame, .. } => cover(frame),
         Frame::Text(_)
         | Frame::Head(_)
         | Frame::Mark(_)
@@ -52,10 +53,7 @@ fn kinds() -> Vec<Frame<'static>> {
         Frame::Quote(Quote {
             frames: common::plain("Quoted."),
         }),
-        Frame::Code(Code {
-            size: TextSize::Pt11,
-            lines: vec!["fn measure() -> u16 { 576 }".into()],
-        }),
+        Frame::Code(Code::new(TextSize::Pt11, "fn measure() -> u16 { 576 }")),
         Frame::Figure(Figure::from_bits(8, 8, &[true; 64]).unwrap()),
         Frame::Math(Math::from_bits(8, 8, &[true; 64], 6).unwrap()),
         Frame::Rule(Rule::tape(Thickness::Two)),

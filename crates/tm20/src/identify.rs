@@ -1,6 +1,7 @@
 //! `GS I` printer identity and `GS ( H` process ID.
 
 use crate::error::IdentifyError;
+use crate::reply::ReplyReader;
 use crate::transport::Transport;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,30 +53,16 @@ pub fn parse_process_id(buf: &[u8]) -> std::result::Result<[u8; 4], IdentifyErro
     }
 }
 
-pub fn read_until_nul<T: Transport>(t: &mut T, max: usize) -> crate::error::Result<Vec<u8>> {
-    let mut buf = vec![0u8; max];
-    let n = t.read(&mut buf)?;
-    buf.truncate(n);
-    match buf.iter().position(|&b| b == 0) {
-        Some(i) => Ok(buf[..i].to_vec()),
-        None => Err(IdentifyError::Unexpected { got: buf }.into()),
-    }
-}
-
-pub fn query_info<T: Transport>(t: &mut T, request: InfoRequest) -> crate::error::Result<Vec<u8>> {
-    t.write(&encode_info(request))?;
+/// Write one `GS I` and read its reply through `reader`. The query is not resent.
+pub fn query_info<T: Transport>(
+    reader: &mut ReplyReader<T>,
+    request: InfoRequest,
+) -> crate::error::Result<Vec<u8>> {
+    reader.transport_mut().write(&encode_info(request))?;
     if request.is_byte() {
-        let mut buf = [0u8; 1];
-        let n = t.read(&mut buf)?;
-        if n != 1 {
-            return Err(IdentifyError::Unexpected {
-                got: buf[..n].to_vec(),
-            }
-            .into());
-        }
-        return Ok(vec![buf[0]]);
+        return reader.read_exact_reply(1);
     }
-    let mut data = read_until_nul(t, 80)?;
+    let mut data = reader.read_nul_reply(80)?;
     if data.first() == Some(&0x5f) {
         data.remove(0);
     }
@@ -85,6 +72,8 @@ pub fn query_info<T: Transport>(t: &mut T, request: InfoRequest) -> crate::error
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::memory::Memory;
+    use crate::reply::ReplyReader;
 
     #[test]
     fn process_id_bytes() {
@@ -106,16 +95,16 @@ mod tests {
 
     #[test]
     fn query_info_strips_underscore_and_nul() {
-        let mut mem = crate::memory::Memory::with_replies(b"_TM-T20III\0".to_vec());
-        let name = query_info(&mut mem, InfoRequest::Name).unwrap();
+        let mut reader = ReplyReader::new(Memory::with_replies(b"_TM-T20III\0".to_vec()));
+        let name = query_info(&mut reader, InfoRequest::Name).unwrap();
         assert_eq!(name, b"TM-T20III");
-        assert_eq!(mem.written, encode_info(InfoRequest::Name));
+        assert_eq!(reader.transport().written, encode_info(InfoRequest::Name));
     }
 
     #[test]
     fn query_info_byte_replies() {
-        let mut mem = crate::memory::Memory::with_replies(vec![0x27]);
-        let id = query_info(&mut mem, InfoRequest::ModelId).unwrap();
+        let mut reader = ReplyReader::new(Memory::with_replies(vec![0x27]));
+        let id = query_info(&mut reader, InfoRequest::ModelId).unwrap();
         assert_eq!(id, vec![0x27]);
     }
 }

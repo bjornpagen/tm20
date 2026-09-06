@@ -9,4 +9,4 @@
 Setext
 ======
 
-## Hello *world*
+## Hello world

@@ -1,12 +1,10 @@
 //! Designed sheets. Copy and catalog — not the typesetting engine.
 
-use std::num::NonZeroU32;
-
 use tm20::document::Document;
 use tm20_set::{
-    Code, ColAlign, Cols, Cut, DecimalDelim, DisplayCut, DisplaySize, Figure, Frame, GridSkip, Head, List,
-    ListFit, ListItem, Mark, MarkAlign, Marker, Note, Quote, Rule, Sheet, Span, TextBlock,
-    TextSize, Thickness, Tracking,
+    Code, ColAlign, Cols, Cut, DecimalDelim, DisplayCut, DisplaySize, Figure, Frame, GridSkip,
+    Head, List, ListFit, ListItem, Mark, MarkAlign, Marker, Note, Quote, Rule, Sheet, Span,
+    TextBlock, TextSize, Thickness, Tracking,
 };
 
 use crate::Result;
@@ -209,10 +207,11 @@ fn helvetica() -> Result<Document> {
 fn suite() -> Result<Document> {
     let faces = system_table()?;
     let body = TextSize::Pt11;
-    let pig = Figure::from_image(include_bytes!("pig.png"), 160)?;
-    let canon = Span::noted(Cut::Italic, "The Vignelli Canon", NonZeroU32::new(1).unwrap());
-    let ruder = Span::noted(Cut::Italic, "Typographie", NonZeroU32::new(2).unwrap());
-    let mut sheet = Sheet::tape(vec![
+    let pig = Figure::from_image(include_bytes!("pig.png"))?;
+    let mut sheet = Sheet::tape(Vec::new());
+    let canon = sheet.add_note(Note::dest("https://www.vignelli.com/canon.pdf"))?;
+    let ruder = sheet.add_note(Note::dest("Ruder, Typographie"))?;
+    sheet.frames = vec![
         Frame::Mark(Mark {
             cut: DisplayCut::Roman,
             size: DisplaySize::Pt18,
@@ -224,9 +223,11 @@ fn suite() -> Result<Document> {
             size: body,
             spans: vec![
                 Span::new(Cut::Roman, "A link is italic with a note: "),
-                canon,
+                Span::new(Cut::Italic, "The Vignelli Canon"),
+                Span::note(canon),
                 Span::new(Cut::Roman, " and "),
-                ruder,
+                Span::new(Cut::Italic, "Typographie"),
+                Span::note(ruder),
                 Span::new(Cut::Roman, "."),
             ],
         }),
@@ -237,10 +238,7 @@ fn suite() -> Result<Document> {
                 "The column is the tape. White is adjacency, not a skip you type.",
             ),
         }),
-        Frame::Code(Code {
-            size: body,
-            lines: vec!["fn measure() -> u16 { 576 }".into()],
-        }),
+        Frame::Code(Code::new(body, "fn measure() -> u16 { 576 }")),
         Frame::List(List {
             size: body,
             cut: Cut::Roman,
@@ -268,10 +266,31 @@ fn suite() -> Result<Document> {
             ])],
         }),
         Frame::Figure(pig),
-    ]);
-    sheet.notes = vec![
-        Note::dest("https://www.vignelli.com/canon.pdf"),
-        Note::dest("Ruder, Typographie"),
     ];
     Ok(tm20_set::lower(&sheet, &faces)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tm20_set::Span;
+
+    #[test]
+    fn suite_notes_are_independent_spans() {
+        let mut sheet = Sheet::tape(Vec::new());
+        let canon = sheet
+            .add_note(Note::dest("https://www.vignelli.com/canon.pdf"))
+            .unwrap();
+        let ruder = sheet.add_note(Note::dest("Ruder, Typographie")).unwrap();
+        assert_eq!(sheet.note_count(), 2);
+        let spans = [
+            Span::new(tm20_set::Cut::Italic, "The Vignelli Canon"),
+            Span::note(canon),
+            Span::new(tm20_set::Cut::Italic, "Typographie"),
+            Span::note(ruder),
+        ];
+        assert!(matches!(spans[1], Span::Note(_)));
+        assert!(matches!(spans[3], Span::Note(_)));
+        assert_ne!(canon, ruder);
+    }
 }

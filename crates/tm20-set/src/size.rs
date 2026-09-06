@@ -12,18 +12,6 @@ pub(crate) fn to_frac(dots: u16) -> i32 {
     i32::from(dots) * FRAC
 }
 
-pub(crate) fn round_dots(v: i32) -> i32 {
-    (v + FRAC / 2) >> 6
-}
-
-pub(crate) fn ceil_dots(v: i32) -> u16 {
-    if v <= 0 {
-        0
-    } else {
-        ((v + FRAC - 1) >> 6) as u16
-    }
-}
-
 fn body_dots(pt: f32) -> u16 {
     (pt * DPI / 72.0).round() as u16
 }

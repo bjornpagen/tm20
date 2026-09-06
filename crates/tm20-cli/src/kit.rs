@@ -19,6 +19,10 @@ pub fn system_table() -> Result<FaceTable> {
 
 fn read_font(path: &str) -> Result<Vec<u8>> {
     std::fs::read(path).map_err(|_| {
-        io::Error::new(io::ErrorKind::NotFound, format!("{path} not on this machine")).into()
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("{path} not on this machine"),
+        )
+        .into()
     })
 }

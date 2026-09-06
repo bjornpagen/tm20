@@ -1,0 +1,5 @@
+# One shared process pool across unit tests, integrations, and visual fixtures.
+[profile.default]
+test-threads = "num-cpus"
+fail-fast = false
+retries = 0

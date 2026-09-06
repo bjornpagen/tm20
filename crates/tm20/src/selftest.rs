@@ -3,8 +3,9 @@
 use crate::barcode::{Barcode, BarcodeKind, BarcodeOptions, Code128Set};
 use crate::command::{Align, CashDrawerPin, CodePage, Command, Font, Underline};
 use crate::document::Document;
-use crate::graphics::{Graphics, GraphicsScale, pack};
+use crate::graphics::{Graphics, GraphicsScale};
 use crate::host::{hello, rule, ruler};
+use crate::raster::Raster;
 use crate::symbol::{
     DataMatrix, DataMatrixType, Gs1DataBar, Gs1DataBarType, Gs1DataBarWidth, MaxiCode,
     MaxiCodeMode, Pdf417, Qr, QrEcc, QrModel,
@@ -342,8 +343,8 @@ fn gs1() -> Document {
     let mut c = start("gs1");
     c.push(Command::Align(Align::Center));
     c.push(Command::Gs1DataBar(Gs1DataBar {
-        data: "12401234567890".into(),
-        width: Gs1DataBarWidth::M,
+        data: "1240123456789".into(),
+        width: Gs1DataBarWidth::S,
         kind: Gs1DataBarType::Stacked,
     }));
     finish(c)
@@ -351,37 +352,31 @@ fn gs1() -> Document {
 
 fn graphics() -> Document {
     let width = 128u16;
-    let height = 64u16;
-    let mut bits = vec![false; width as usize * height as usize];
-    for y in 0..height as usize {
-        for x in 0..width as usize {
-            bits[y * width as usize + x] = ((x / 8) + (y / 8)) % 2 == 0;
+    let height = 64u32;
+    let mut bits = vec![false; usize::from(width) * 64];
+    for y in 0..64 {
+        for x in 0..usize::from(width) {
+            bits[y * usize::from(width) + x] = ((x / 8) + (y / 8)) % 2 == 0;
         }
     }
-    let pixels = pack(width, height, &bits).expect("checkerboard size is consistent");
-    let strip = pack(
+    let checker = Raster::from_bits(width, height, &bits).expect("checkerboard size is consistent");
+    let strip = Raster::from_bits(
         PRINTABLE_DOTS,
         16,
-        &vec![true; PRINTABLE_DOTS as usize * 16],
+        &vec![true; usize::from(PRINTABLE_DOTS) * 16],
     )
     .expect("576-dot strip size is consistent");
     let mut c = start("graphics");
     c.push(Command::Align(Align::Center));
     labeled(&mut c, "128x64 checkerboard GS ( L");
-    c.push(Command::Graphics(Graphics {
-        width_dots: width,
-        height_dots: height,
-        pixels,
-        scale: GraphicsScale::Normal,
-    }));
+    c.push(Command::Graphics(
+        Graphics::new(checker, GraphicsScale::Normal).expect("checkerboard fits fn=112"),
+    ));
     c.push(Command::Feed { lines: 1 });
     labeled(&mut c, "576-dot black strip");
-    c.push(Command::Graphics(Graphics {
-        width_dots: PRINTABLE_DOTS,
-        height_dots: 16,
-        pixels: strip,
-        scale: GraphicsScale::Normal,
-    }));
+    c.push(Command::Graphics(
+        Graphics::new(strip, GraphicsScale::Normal).expect("576-dot strip fits fn=112"),
+    ));
     finish(c)
 }
 

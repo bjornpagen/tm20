@@ -1,41 +1,42 @@
-//! Face table and font digests shared by snap and paper.
+//! Shared Markdown integration helpers. Not a test binary.
+//! Each integration binary uses a subset; unused items stay for the others.
+#![allow(dead_code, unused_imports)]
 
-use tm20_set::FaceTable;
+pub mod admit;
+pub mod assets;
+pub mod compare;
+pub mod faces;
+pub mod parse;
 
-pub const HELVETICA: &str = "/System/Library/Fonts/Helvetica.ttc";
-pub const MENLO: &str = "/System/Library/Fonts/Menlo.ttc";
+pub use admit::{admit_corpus, admit_reject, defective_skip_on_missing};
+pub use faces::{lock_text, require_locked_fonts, table, tests_dir};
+pub use parse::{parse, parse_err, span_cut, span_note, span_text, text_runs};
 
-const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-const FNV_PRIME: u64 = 0x0100_0000_01b3;
+pub struct TempDir(std::path::PathBuf);
 
-pub fn table() -> FaceTable {
-    let mut table = FaceTable::new();
-    table.absorb(std::fs::read(HELVETICA).expect("Helvetica.ttc"));
-    table.absorb(std::fs::read(MENLO).expect("Menlo.ttc"));
-    table
-}
+impl std::ops::Deref for TempDir {
+    type Target = std::path::Path;
 
-/// FNV-1a 64 over `bytes`. Drift detector, not a security hash.
-#[allow(dead_code)]
-pub fn fnv1a64(bytes: &[u8]) -> u64 {
-    let mut hash = FNV_OFFSET;
-    for &b in bytes {
-        hash ^= u64::from(b);
-        hash = hash.wrapping_mul(FNV_PRIME);
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
-    hash
 }
 
-#[allow(dead_code)]
-pub fn file_digest(path: &str) -> u64 {
-    fnv1a64(&std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}")))
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
-#[allow(dead_code)]
-pub fn lock_text() -> String {
-    format!(
-        "helvetica {:016x}\nmenlo {:016x}\n",
-        file_digest(HELVETICA),
-        file_digest(MENLO)
-    )
+pub fn uniq_temp(prefix: &str) -> TempDir {
+    let p = std::env::temp_dir().join(format!(
+        "tm20-{prefix}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+    TempDir(p)
 }

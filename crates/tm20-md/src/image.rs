@@ -10,8 +10,14 @@ use crate::error::Error;
 /// URLs are read from disk. Other schemes (HTTP, data, mailto) fail; a caller
 /// that wants those supplies its own `load`.
 pub fn image_bytes(base: &Path, dest: &str) -> Result<Vec<u8>, Error> {
-    let path = image_path(base, dest)?;
-    std::fs::read(path).map_err(|_| Error::Image)
+    let path = image_path(base, dest).map_err(|_| Error::Resource {
+        destination: dest.to_owned(),
+        reason: "not a valid local path or local file URL; use the CLI for HTTP(S) images".into(),
+    })?;
+    std::fs::read(&path).map_err(|e| Error::Resource {
+        destination: dest.to_owned(),
+        reason: format!("{}: {e}", path.display()),
+    })
 }
 
 fn image_path(base: &Path, dest: &str) -> Result<PathBuf, Error> {
@@ -153,20 +159,23 @@ mod tests {
     fn http_dest_is_an_error() {
         assert!(matches!(
             image_bytes(&fixtures(), "https://example.com/grid.png"),
-            Err(Error::Image)
+            Err(Error::Resource { .. })
         ));
     }
 
     #[test]
     fn empty_dest_is_an_error() {
-        assert!(matches!(image_bytes(&fixtures(), ""), Err(Error::Image)));
+        assert!(matches!(
+            image_bytes(&fixtures(), ""),
+            Err(Error::Resource { .. })
+        ));
     }
 
     #[test]
     fn missing_file_is_an_error() {
         assert!(matches!(
             image_bytes(&fixtures(), "no-such.png"),
-            Err(Error::Image)
+            Err(Error::Resource { .. })
         ));
     }
 }
